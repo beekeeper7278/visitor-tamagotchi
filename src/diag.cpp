@@ -13,6 +13,10 @@
 #include "ui_diag.h"
 #include "scr_main.h"
 #include "strings.h"
+#include "rtc.h"
+#include "sim.h"
+#include "persist.h"
+#include "setclock.h"
 #include "menu.h"
 #include "pages.h"
 #include "pet.h"
@@ -612,6 +616,20 @@ void diag_storage_report(void)
     const load_result_t r = storage_load(&s);
     Serial.printf("    load result       : %s\n", storage_load_result_str(r));
 
+    /* NON-DESTRUCTIVE FROM MILESTONE 6 ONWARDS.
+     * This round-trip writes test values into the ONE real save slot. That
+     * was harmless in Phase 1, when nothing real was stored - but the slot
+     * now holds the actual Visitor, and this self-test runs on every boot
+     * BEFORE persist_load(). It was overwriting hunger/happiness/weight with
+     * 42.5/77.0/63.4 every single boot, which is exactly the "stale values"
+     * mismatch seen in the fidelity test.
+     *
+     * Snapshot the real save first and put it back afterwards, so the test
+     * still exercises the genuine write path without eating the pet. */
+    save_t orig;
+    const bool orig_valid = (r == LOAD_OK || r == LOAD_MIGRATED);
+    if (orig_valid) memcpy(&orig, &s, sizeof(orig));
+
     /* Round-trip test: write, read back, compare. Proves CRC, sizing and
      * the shadow-compare all agree before any game state depends on them. */
     s.hunger = 42.5f; s.happiness = 77.0f; s.weight_g = 63.4f;
@@ -644,6 +662,17 @@ void diag_storage_report(void)
     const uint32_t recrc = storage_crc32((const uint8_t *)&bad + 8, sizeof(save_t) - 8);
     Serial.printf("    crc detects damage: %s\n",
                   (recrc != bad.crc32) ? "yes" : "NO - CRC IS NOT COVERING THE STRUCT");
+
+    /* Put the real save back exactly as it was. */
+    if (orig_valid) {
+        const bool restored = storage_save(&orig, true);
+        Serial.printf("    real save         : %s\n",
+                      restored ? "preserved (test was non-destructive)"
+                               : "RESTORE FAILED");
+    } else {
+        storage_wipe();      /* it was empty before; leave it empty */
+        Serial.println("    real save         : none existed, left empty");
+    }
 
     Serial.printf("    writes this boot  : %lu (skipped %lu)\n",
                   (unsigned long)storage_write_count(),
@@ -852,6 +881,99 @@ static void diag_page_sweep(void)
     Serial.println(LINE);
 }
 
+/* Set the clock to a fixed, plausible moment so the RTC path - including the
+ * OS-flag clear - is exercisable without a date picker existing yet. */
+static void diag_rtc_set_demo(void)
+{
+    rtc_time_t t = { 2026, 8, 28, 19, 30, 0 };
+    Serial.println("RTC set -> 2026-08-28 19:30:00");
+    if (!rtc_set(&t)) return;
+    char b[32]; rtc_format(rtc_now(), b, sizeof(b));
+    Serial.printf("RTC now: %s   health: %s\n", b, rtc_health_name(rtc_health()));
+
+    /* Same baseline logic as the on-screen setter, so serial testing
+     * exercises the real path rather than a shortcut. */
+    pet_state_t *p = pet_mutable();
+    if (!p->hatch_ts) {
+        p->hatch_ts = rtc_now();
+        p->days_alive = 0;
+        pet_apply_stage_for_day(0);
+        Serial.println("hatch baseline established, age 0");
+    }
+    p->last_sim_ts = rtc_now();
+    persist_save(true);
+}
+
+/* Simulate having been switched off for N hours, using the REAL catch-up
+ * path - not a separate test implementation, which would prove nothing. */
+static void diag_simulate_absence(uint32_t hours)
+{
+    const uint32_t now = rtc_trusted() ? rtc_now() : 1788000000UL;
+    const uint32_t then = now - hours * 3600UL;
+    Serial.printf("\nSIMULATING an absence of %lu hours\n", (unsigned long)hours);
+    sim_report_t rep;
+    sim_catch_up(then, now, &rep);
+    sim_print_report();
+    const char *g = sim_return_greeting(&rep);
+    Serial.printf("  return greeting: %s\n", g ? g : "(none - too short to mention)");
+    if (g) ui_bubble_say(BUBBLE_T0_CRITICAL, g);
+}
+
+/* Persistence fidelity. Freezes the simulator first, so any difference
+ * between SAVED and RAW LOADED is a pack/save/load bug and nothing else. */
+static void diag_persist_fidelity(void)
+{
+    pet_set_sim_suspended(true);
+
+    care_reset();
+    pet_state_t *p = pet_mutable();
+    p->hunger      = 73.0f;
+    p->happiness   = 61.0f;
+    p->discipline  = 47.0f;
+    p->cleanliness = 82.0f;
+    p->energy      = 39.0f;
+    p->weight_g    = 63.7f;
+    p->bathroom    = 37.0f;
+    care_set_lights(false);
+
+    /* one known mess, at a known place */
+    care_restore_mess(2 /*poop*/, 0, false, 0, 0, 120, 300);
+    p->mess_count = care_mess_count();
+
+    Serial.println();
+    Serial.println("=== PERSISTENCE FIDELITY TEST =============================");
+    Serial.println("simulation SUSPENDED - nothing else can move these values");
+    persist_print_state("SAVED");
+    persist_save(true);
+    persist_report();
+    Serial.println("Now reboot. The boot log prints [RAW LOADED] before any");
+    Serial.println("catch-up runs, then [SIMULATED] after. SAVED must equal");
+    Serial.println("RAW LOADED exactly.");
+    Serial.println("-----------------------------------------------------------");
+}
+
+/* Jump the clock to a specific hour so the sleep window can be exercised on
+ * demand instead of waiting until 8 pm. Establishes the hatch baseline if it
+ * is missing, so the Visitor is a Baby rather than an Egg - naps are a Baby
+ * behaviour and an Egg would not show them. */
+static void diag_clock_to(uint8_t hour, uint8_t minute, const char *what)
+{
+    rtc_time_t t = { 2026, 8, 28, hour, minute, 0 };
+    if (!rtc_set(&t)) { Serial.println("clock set FAILED"); return; }
+
+    pet_state_t *p = pet_mutable();
+    if (!p->hatch_ts) {
+        p->hatch_ts = rtc_now();
+        p->days_alive = 0;
+        pet_apply_stage_for_day(0);
+    }
+    p->last_sim_ts = rtc_now();
+
+    char b[32]; rtc_format(rtc_now(), b, sizeof(b));
+    Serial.printf("CLOCK -> %s (%s), stage %s\n", b, what,
+                  pet_stage_name(p->stage));
+}
+
 static void diag_screen(bool pet)
 {
     if (pet) { scr_main_show(); Serial.println("screen -> PET (Phase 2)"); }
@@ -883,6 +1005,17 @@ void diag_help(void)
     Serial.println("  0  Bathroom action        C  Clean action");
     Serial.println("  T  fast-forward 30 simulated minutes");
     Serial.println("  R  care state report");
+    Serial.println("  X  RESET the Visitor (newborn stats, clean room)");
+    Serial.println("  --- Phase 5+6: clock, sleep, offline catch-up ---");
+    Serial.println("  c  set the RTC to a demo time (clears the OS flag)");
+    Serial.println("  l  toggle Lights (affects sleep recovery)");
+    Serial.println("  h  simulate 8 h away    H  simulate 72 h    j  simulate 8 days");
+    Serial.println("  p  force a save now + write/skip counters");
+    Serial.println("  V  v1 -> v2 schema migration test");
+    Serial.println("  Y  persistence fidelity test (freezes sim, then reboot)");
+    Serial.println("  y  toggle simulation suspend");
+    Serial.println("  N  clock -> 20:30 bedtime   G  -> 07:30 wake   A  -> 13:30 nap");
+    Serial.println("  u  open the Set Date & Time screen");
     Serial.println("  B  one sample bubble (cycles tiers)");
     Serial.println("  S  BUBBLE STRESS TEST - 20 requests, most should refuse");
     Serial.println("  L  BUBBLE LAYOUT TEST - 4 strings x 3 pet positions");
@@ -961,6 +1094,46 @@ void diag_serial_tick(void)
             case 'C': care_clean();              break;
             case 'T': care_fast_forward(30);     break;
             case 'R': care_report();             break;
+            case 'c': diag_rtc_set_demo();       break;
+            case 'h': diag_simulate_absence(8);   break;
+            case 'H': diag_simulate_absence(72);  break;
+            case 'j': diag_simulate_absence(192); break;   /* 8 days */
+            case 'l': care_set_lights(!care_lights_on());
+                      Serial.printf("lights %s\n", care_lights_on() ? "ON" : "off");
+                      break;
+            case 'p': persist_save(true); persist_report(); break;
+            case 'N': diag_clock_to(20, 30, "night / bedtime");  break;
+            case 'G': diag_clock_to(7, 30, "morning / wake");     break;
+            case 'A': diag_clock_to(13, 30, "afternoon nap");     break;
+            case 'u': setclock_open();
+                      Serial.println("Set Date & Time opened (step 1 of 2)");
+                      break;
+            case 'Y': diag_persist_fidelity();   break;
+            case 'y': pet_set_sim_suspended(!pet_sim_suspended());
+                      Serial.printf("simulation %s\n",
+                                    pet_sim_suspended() ? "SUSPENDED" : "running");
+                      break;
+            case 'V': {
+                Serial.println();
+                Serial.println("=== v1 -> v2 MIGRATION TEST ===============================");
+                storage_write_fake_v1(41.0f, 58.5f, 4);
+                const load_result_t r = persist_load();
+                const pet_state_t *q = pet_get();
+                Serial.printf("  result   : %s\n", storage_load_result_str(r));
+                Serial.printf("  hunger   : %.0f  (expected 41)\n", q->hunger);
+                Serial.printf("  weight   : %.1f  (expected 58.5)\n", q->weight_g);
+                Serial.printf("  days     : %u   (expected 4)\n", q->days_alive);
+                Serial.printf("  bathroom : %.0f  (expected 0 - new in v2)\n", q->bathroom);
+                Serial.printf("  messes   : %u   (expected 0 - new in v2)\n", care_mess_count());
+                Serial.println("-----------------------------------------------------------");
+                break;
+            }
+            case 'X':
+                pet_init();
+                care_reset();
+                Serial.println("=== VISITOR RESET to a newborn Baby ===");
+                care_report();
+                break;
             case 'M': menu_toggle();             break;
             case '[': menu_step(-1);             break;
             case ']': menu_step(1);              break;

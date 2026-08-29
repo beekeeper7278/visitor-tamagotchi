@@ -126,14 +126,35 @@ load_result_t storage_load(save_t *out)
         return LOAD_OK;
     }
 
-    /* --- migration chain: v(n) -> v(n+1) -----------------------------------
-     * Nothing to do yet at schema 1. The chain is written now so that the
-     * first time the struct changes, the shape to add to is already here
-     * and obvious.
-     *
-     *   if (cand->schema == 1) { ...copy v1 fields into out...; cand->schema = 2; }
-     *   if (cand->schema == 2) { ... }
-     */
+    /* --- migration chain: v(n) -> v(n+1) ---------------------------------- */
+
+    if (cand->schema == 1) {
+        /* v1 is a strict byte prefix of v2 (schema 2 fields were appended),
+         * so the migration is a prefix copy plus a zeroed tail. Validate the
+         * v1 CRC over the v1 LENGTH first - migrating unverified bytes would
+         * turn a corrupt save into a plausible-looking one. */
+        if (cand->struct_size != SAVE_V1_SIZE || stored != SAVE_V1_SIZE)
+            return LOAD_CORRUPT;
+
+        const uint32_t want = storage_crc32(scratch + CRC_OFFSET,
+                                            SAVE_V1_SIZE - CRC_OFFSET);
+        if (want != cand->crc32) return LOAD_CORRUPT;
+
+        memset(out, 0, sizeof(save_t));
+        memcpy(out, cand, SAVE_V1_SIZE);
+        out->schema      = 2;
+        out->struct_size = sizeof(save_t);
+        /* New v2 fields are already zero, which is the correct v1 meaning:
+         * no bathroom need recorded, and no individually-tracked messes. */
+        out->bathroom = 0;
+        out->accidents = 0;
+        memset(out->mess_type, 0, sizeof(out->mess_type));
+
+        memcpy(&s_shadow, out, sizeof(save_t));
+        s_shadow_valid = true;
+        return LOAD_MIGRATED;
+    }
+
     return LOAD_CORRUPT;
 }
 
@@ -177,6 +198,36 @@ bool storage_wipe(void)
     if (!s_open) return false;
     s_shadow_valid = false;
     return s_prefs.clear();
+}
+
+bool storage_write_fake_v1(float hunger, float weight_g, uint16_t days)
+{
+    if (!s_open) return false;
+
+    uint8_t buf[SAVE_V1_SIZE];
+    memset(buf, 0, sizeof(buf));
+    save_t *v = (save_t *)buf;          /* v1 is a prefix of v2 */
+
+    v->schema      = 1;
+    v->struct_size = SAVE_V1_SIZE;
+    v->hunger      = hunger;
+    v->happiness   = 64.0f;
+    v->discipline  = 40.0f;
+    v->cleanliness = 55.0f;
+    v->energy      = 70.0f;
+    v->weight_g    = weight_g;
+    v->days_alive_max = days;
+    v->stage       = 1;
+    v->meals       = 7;
+    v->flags       = SF_HATCHED;
+
+    v->crc32 = storage_crc32(buf + CRC_OFFSET, SAVE_V1_SIZE - CRC_OFFSET);
+
+    const size_t w = s_prefs.putBytes(NVS_KEY_SAVE, buf, SAVE_V1_SIZE);
+    s_shadow_valid = false;             /* shadow no longer matches NVS */
+    Serial.printf("TEST: wrote a synthetic schema-1 save (%u bytes)\n",
+                  (unsigned)SAVE_V1_SIZE);
+    return w == SAVE_V1_SIZE;
 }
 
 uint32_t storage_write_count(void)   { return s_writes;  }

@@ -10,6 +10,9 @@
 #include "pages.h"
 #include "care.h"
 #include "menu.h"
+#include "rtc.h"
+#include "persist.h"
+#include "setclock.h"
 
 /* --- shared page furniture ---------------------------------------------- */
 
@@ -183,6 +186,16 @@ static void build_games(lv_obj_t *p)
 /* --- 4. Care ------------------------------------------------------------- */
 
 static void care_bathroom_cb(lv_event_t *e) { (void)e; if (menu_swipe_active()) return; care_bathroom(); }
+static void care_lights_cb(lv_event_t *e)
+{
+    (void)e;
+    if (menu_swipe_active()) return;
+    care_set_lights(!care_lights_on());
+    Serial.printf("LIGHTS %s\n", care_lights_on() ? "ON" : "OFF");
+    persist_mark_dirty("lights");
+    menu_rebuild_page();          /* so the label reflects the new state */
+}
+
 static void care_clean_cb(lv_event_t *e)    { (void)e; if (menu_swipe_active()) return; care_clean(); }
 
 static void build_care(lv_obj_t *p)
@@ -194,40 +207,68 @@ static void build_care(lv_obj_t *p)
     lv_obj_add_event_cb(b, care_bathroom_cb, LV_EVENT_CLICKED, NULL);
     b = card(p, "Clean Up", 36, 180, W, H, 0x9E86E8, true);
     lv_obj_add_event_cb(b, care_clean_cb, LV_EVENT_CLICKED, NULL);
-    /* Lights belongs to the sleep phase, Discipline to the stat model that
-     * owns it. Shown greyed rather than hidden, so the page never silently
-     * changes shape later. */
-    card(p, "Lights",     36, 264, W, H, 0xF2C14E, false);
+    /* Lights is live from Milestone 5: OFF during scheduled sleep gives the
+     * better energy recovery, ON gives reduced recovery and marks the
+     * forgotten-lights history. The label states the CURRENT state, because
+     * a light switch whose position you cannot read is useless. */
+    char lb[24];
+    snprintf(lb, sizeof(lb), "Lights: %s", care_lights_on() ? "ON" : "OFF");
+    b = card(p, lb, 36, 264, W, H, care_lights_on() ? 0xF2C14E : 0x6B5A2E, true);
+    lv_obj_add_event_cb(b, care_lights_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Discipline belongs to the stat model that owns it. */
     card(p, "Discipline", 36, 348, W, H, 0x8FCB9B, false);
 }
 
 /* --- 5. Clock / Pet Info ------------------------------------------------- */
+
+static void setclock_cb(lv_event_t *e)
+{
+    (void)e;
+    if (menu_swipe_active()) return;
+    setclock_open();
+}
 
 static void build_clock(lv_obj_t *p)
 {
     const pet_state_t *s = pet_get();
     title(p, "Pet Info");
 
+    char tb[40];
+    if (rtc_trusted()) {
+        rtc_time_t t;
+        rtc_read(&t);
+        const uint8_t h12 = (t.hour % 12) ? (t.hour % 12) : 12;
+        snprintf(tb, sizeof(tb), "%d:%02d %s", h12, t.min, t.hour >= 12 ? "PM" : "AM");
+    } else {
+        snprintf(tb, sizeof(tb), "--:--");
+    }
     lv_obj_t *l = lv_label_create(p);
-    lv_label_set_text(l, "--:--");
+    lv_label_set_text(l, tb);
     lv_obj_set_style_text_font(l, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(l, lv_color_hex(0x3A3A46), 0);
+    lv_obj_set_style_text_color(l,
+        lv_color_hex(rtc_trusted() ? 0xE8E8E8 : 0x3A3A46), 0);
     lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 92);
 
-    note(p, "Clock, Set Time and Start Over belong to the RTC phase and are "
-            "deliberately left unwired.", 136);
+    if (!rtc_trusted())
+        note(p, "Clock not set. Aging and offline catch-up stay paused until "
+                "a real date and time are entered.", 126);
+
+    lv_obj_t *sb = card(p, "Set Date & Time", 36, 166, BSP_LCD_W - 72, 56,
+                        0x7FA8E8, true);
+    lv_obj_add_event_cb(sb, setclock_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *i = lv_label_create(p);
     lv_label_set_text_fmt(i, "stage    %s\nday      %d\nweight   %d g\nform     %s",
                           pet_stage_name(s->stage), (int)s->days_alive,
                           (int)(s->weight_g + 0.5f), forms_name(s->form_id));
     lv_obj_set_style_text_color(i, lv_color_hex(0xB0B8C8), 0);
-    lv_obj_align(i, LV_ALIGN_TOP_MID, 0, 226);
+    lv_obj_align(i, LV_ALIGN_TOP_MID, 0, 240);
 
     /* Volume control hook reserved for the audio phase - see
      * docs/PHASE10-AUDIO-REQUIREMENTS.md. Not built, only reserved. */
-    card(p, "Volume", 36, 330, BSP_LCD_W - 72, 56, 0x9AA6C4, false);
-    note(p, "Volume arrives with audio. Mute will silence sound only.", 396);
+    card(p, "Volume", 36, 336, BSP_LCD_W - 72, 50, 0x9AA6C4, false);
+    note(p, "Volume arrives with audio. Mute will silence sound only.", 392);
 }
 
 /* --- 6. Journal ---------------------------------------------------------- */

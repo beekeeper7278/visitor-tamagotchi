@@ -176,6 +176,16 @@ static void transition_to(uint8_t next, int8_t dir)
     Serial.printf("PAGE -> %u %s (%s)\n", s_idx, page_name(s_idx), menu_transition_name());
 }
 
+void menu_rebuild_page(void)
+{
+    if (!s_open || s_busy || !s_page) return;
+    lv_obj_t *old = s_page;
+    s_page = page_create(s_idx, s_cont);
+    lv_obj_set_pos(s_page, 0, 0);
+    lv_anim_del(old, NULL);
+    lv_obj_del(old);
+}
+
 void menu_goto(uint8_t page)
 {
     if (!s_open || page >= PAGE_COUNT || page == s_idx) return;

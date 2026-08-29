@@ -23,6 +23,10 @@
 #include "strings.h"
 #include "care.h"
 #include "menu.h"
+#include "persist.h"
+#include "rtc.h"
+#include "sim.h"
+#include "bsp.h"
 
 typedef enum { MESS_NONE = 0, MESS_FOOD, MESS_POOP } mess_type_t;
 
@@ -160,7 +164,10 @@ static void mess_style(mess_t *m, uint8_t slot)
     lv_obj_clear_flag(m->obj, LV_OBJ_FLAG_HIDDEN);
 }
 
-static bool mess_add(mess_type_t t, food_t f, bool bitten)
+/* at_x < 0 means "put it in the next free floor slot" (accidents). An
+ * explicit position keeps a half-eaten burger exactly where it was left. */
+static bool mess_add_at(mess_type_t t, food_t f, bool bitten,
+                        lv_coord_t at_x, lv_coord_t at_y)
 {
     for (uint8_t i = 0; i < MESS_MAX; i++) {
         if (s_mess[i].type != MESS_NONE) continue;
@@ -176,6 +183,11 @@ static bool mess_add(mess_type_t t, food_t f, bool bitten)
             lv_obj_clear_flag(s_mess[i].obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         }
         mess_style(&s_mess[i], i);
+        if (at_x >= 0) {                 /* override the slot position */
+            s_mess[i].x = at_x;
+            s_mess[i].y = at_y;
+            lv_obj_set_pos(s_mess[i].obj, at_x, at_y);
+        }
         pet_mutable()->mess_count = care_mess_count();
         pet_mutable()->times_dirty++;
         Serial.printf("MESS + %s  (now %u)\n",
@@ -187,6 +199,11 @@ static bool mess_add(mess_type_t t, food_t f, bool bitten)
      * and an unwinnable cleanliness spiral. */
     Serial.println("MESS + ignored: floor already at MESS_MAX");
     return false;
+}
+
+static bool mess_add(mess_type_t t, food_t f, bool bitten)
+{
+    return mess_add_at(t, f, bitten, -1, -1);
 }
 
 uint8_t care_mess_count(void)
@@ -215,34 +232,67 @@ void care_init(lv_obj_t *room_layer)
 
 static float clamp100(float v) { return v < 0.0f ? 0.0f : (v > 100.0f ? 100.0f : v); }
 
-static void advance(uint32_t dt_ms)
+/* THE shared advance step - see care.h. Live ticks and offline catch-up
+ * chunks both come through here. */
+void care_advance(uint32_t dt_ms, const sim_ctx_t *ctx, sim_budget_t *b)
 {
     if (dt_ms == 0) return;
     pet_state_t *p = pet_mutable();
     const float hours = (float)dt_ms / 3600000.0f;
     s_sim_ms += dt_ms;
 
-    /* passive drift - only the stats this milestone owns. Energy and sleep
-     * belong to the RTC phase and are left alone on purpose. */
-    p->hunger      = clamp100(p->hunger + RATE_HUNGER_AWAKE * hours);
-    p->cleanliness = clamp100(p->cleanliness + RATE_CLEAN_AWAKE * hours);
-    p->weight_g   += RATE_WEIGHT_AWAKE * hours;
-    if (p->weight_g < PET_WEIGHT_MIN_G) p->weight_g = PET_WEIGHT_MIN_G;
-    if (p->weight_g > PET_WEIGHT_MAX_G) p->weight_g = PET_WEIGHT_MAX_G;
+    /* --- hunger ------------------------------------------------------- */
+    float d_hun = (ctx->asleep ? RATE_HUNGER_ASLEEP : RATE_HUNGER_AWAKE) * hours;
+    if (ctx->offline && b) {
+        /* budget is a POSITIVE remaining-damage allowance */
+        float want = -d_hun;
+        if (want > b->hunger_left) { want = b->hunger_left; b->cap_hunger = true; }
+        b->hunger_left -= want;
+        d_hun = -want;
+    }
+    p->hunger = clamp100(p->hunger + d_hun);
 
-    float happy = p->happiness + RATE_HAPPY_AWAKE * hours;
-    if (happy < HAPPINESS_DECAY_FLOOR) happy = HAPPINESS_DECAY_FLOOR;  /* never brutal */
+    /* --- happiness: gentle, and never below the floor ------------------ */
+    float d_hap = (ctx->asleep ? RATE_HAPPY_ASLEEP : RATE_HAPPY_AWAKE) * hours;
+    if (ctx->offline && b) {
+        float want = -d_hap;
+        if (want > b->happy_left) { want = b->happy_left; b->cap_happy = true; }
+        b->happy_left -= want;
+        d_hap = -want;
+    }
+    float happy = p->happiness + d_hap;
+    if (happy < HAPPINESS_DECAY_FLOOR) happy = HAPPINESS_DECAY_FLOOR;
     p->happiness = clamp100(happy);
 
-    /* messes: grace period, then a slow drain, capped per mess. This is what
-     * stops one forgotten crumb destroying cleanliness. */
+    /* --- energy: sleep recovers, and lights-on recovers WORSE ---------- */
+    float d_eng;
+    if (ctx->asleep) {
+        d_eng = (ctx->lights_on ? RATE_ENERGY_SLEEP_LIT : RATE_ENERGY_SLEEP_DARK) * hours;
+    } else {
+        d_eng = RATE_ENERGY_AWAKE * hours;
+    }
+    p->energy = clamp100(p->energy + d_eng);
+
+    /* --- weight -------------------------------------------------------
+     * Offline weight drift is deliberately OMITTED. Absence alone must not
+     * change weight; it follows food and history rules only. */
+    if (!ctx->offline) {
+        p->weight_g += (ctx->asleep ? RATE_WEIGHT_ASLEEP : RATE_WEIGHT_AWAKE) * hours;
+        if (p->weight_g < PET_WEIGHT_MIN_G) p->weight_g = PET_WEIGHT_MIN_G;
+        if (p->weight_g > PET_WEIGHT_MAX_G) p->weight_g = PET_WEIGHT_MAX_G;
+    }
+
+    /* --- cleanliness: base drift + per-mess drain ---------------------- */
+    float clean_take = -((ctx->asleep ? RATE_CLEAN_ASLEEP : RATE_CLEAN_AWAKE) * hours);
+
     for (uint8_t i = 0; i < MESS_MAX; i++) {
         if (s_mess[i].type == MESS_NONE) continue;
         s_mess[i].age_ms += dt_ms;
+
         if (!s_mess[i].stinking && s_mess[i].type == MESS_POOP &&
             s_mess[i].age_ms >= STINK_AFTER_MS) {
             s_mess[i].stinking = true;
-            mess_style(&s_mess[i], i);       /* redraw once, with the lines */
+            mess_style(&s_mess[i], i);
         }
         if (s_mess[i].age_ms < MESS_GRACE_MS) continue;
 
@@ -252,23 +302,67 @@ static void advance(uint32_t dt_ms)
 
         float take = rate * hours;
         if (s_mess[i].drained + take > cap) take = cap - s_mess[i].drained;
-        if (take <= 0.0f) continue;              /* this mess is spent */
+        if (take <= 0.0f) continue;
         s_mess[i].drained += take;
-        p->cleanliness = clamp100(p->cleanliness - take);
+        clean_take += take;
     }
 
-    /* bathroom need */
+    if (ctx->offline && b) {
+        if (clean_take > b->clean_left) { clean_take = b->clean_left; b->cap_clean = true; }
+        b->clean_left -= clean_take;
+    }
+    p->cleanliness = clamp100(p->cleanliness - clean_take);
+
+    /* --- bathroom ------------------------------------------------------ */
     if (!s_bath_active) {
         p->bathroom = clamp100(p->bathroom + RATE_BATHROOM_PER_HOUR * hours);
     }
+
+    /* Offline accidents: AT MOST ONE per absence. Without this the pet
+     * would produce poop after poop in an empty room, which is both
+     * unwinnable and not interesting. After the one accident the need is
+     * satisfied and simply starts climbing again. */
+    if (ctx->offline && b && p->bathroom >= 100.0f) {
+        if (b->accidents_left > 0) {
+            b->accidents_left--;
+            p->bathroom = 0.0f;
+            p->accidents++;
+            /* Charge the accident to the SAME cleanliness budget as the mess
+             * drain. Applying it outside the cap let a single absence take
+             * more than OFFLINE_CLEAN_MAX_DROP while still reporting "no
+             * caps reached" - the report and the behaviour disagreed. */
+            float hit = BATHROOM_ACCIDENT_CLEAN;
+            if (hit > b->clean_left) { hit = b->clean_left; b->cap_clean = true; }
+            b->clean_left -= hit;
+            p->cleanliness = clamp100(p->cleanliness - hit);
+            mess_add(MESS_POOP, FOOD_BURGER, false);
+        } else {
+            b->cap_accident = true;
+            /* Desperate, but with the live grace window intact - see
+             * OFFLINE_BATHROOM_PARK_PCT for why this is not 100. */
+            p->bathroom = OFFLINE_BATHROOM_PARK_PCT;
+        }
+    }
 }
+
+/* Bed and lights live further down with care_reset(); declared here because
+ * care_tick() drives the bedtime sequence. */
+static void build_bed(uint8_t stage);
+static void bed_hide(void);
+static lv_obj_t *s_bed;
+static uint32_t  s_last_bright_complaint;
+static bool      s_lights_on = true;   /* daytime default: lights on */
 
 void care_tick(void)
 {
+    if (pet_sim_suspended()) { s_last_ms = millis(); return; }
     const uint32_t now = millis();
     const uint32_t dt = now - s_last_ms;
     s_last_ms = now;
-    advance(dt);
+
+    /* Live: no damage budget, and the sleep model supplies the context. */
+    sim_ctx_t ctx = { pet_get()->asleep, care_lights_on(), false };
+    care_advance(dt, &ctx, nullptr);
 
     pet_state_t *p = pet_mutable();
 
@@ -289,6 +383,54 @@ void care_tick(void)
         s_last_warn_ms = 0;
     }
     s_was_urgent = urgent;
+
+    /* --- sleep presentation ------------------------------------------
+     * Bedtime is a visible event: walk to the middle, a bed appears, the
+     * Visitor settles into it. Waking restores daytime automatically. */
+    if (rtc_trusted()) {
+        rtc_time_t rt;
+        if (rtc_read(&rt)) {
+            bool nap = false;
+            const bool should_sleep = sim_is_sleep_hour(rt.hour, p->stage, &nap);
+
+            if (should_sleep && !p->asleep && !s_bath_active) {
+                p->asleep = true;
+                ui_pet_set_wander(false);
+                build_bed(p->stage);
+                ui_pet_walk_to(SLEEP_SPOT_X, SLEEP_SPOT_Y);
+                Serial.printf("SLEEP: bedtime (%s), heading to bed\n",
+                              nap ? "nap" : "night");
+                persist_mark_dirty("bedtime");
+            } else if (!should_sleep && p->asleep) {
+                p->asleep = false;
+                /* Morning restores daytime automatically - lights back ON
+                 * and full brightness, whatever the player left them at. */
+                care_set_lights(true);
+                bed_hide();
+                ui_pet_set_wander(true);
+                ui_pet_play(PET_ANIM_HAPPY);        /* a little stretch */
+                ui_bubble_say(BUBBLE_T2_MOOD, "Morning!");
+                Serial.println("SLEEP: wake up - bed away, daytime restored");
+                persist_mark_dirty("woke up");
+            }
+
+            if (p->asleep) {
+                /* settle into the bed once the walk there finishes */
+                if (ui_pet_current() == PET_ANIM_IDLE)
+                    ui_pet_play(PET_ANIM_SLEEPING);
+
+                /* Sleeping with the light on works, it is just worse - and
+                 * the Visitor will occasionally say so, without nagging. */
+                if (s_lights_on && now - s_last_bright_complaint >= LIGHTS_TOO_BRIGHT_MS) {
+                    s_last_bright_complaint = now;
+                    ui_bubble_say(BUBBLE_T2_MOOD,
+                                  (now / 1000) % 2 ? "Turn the light off!"
+                                                   : "It's too bright!");
+                }
+                return;     /* asleep: no holding pose, no wandering */
+            }
+        }
+    }
 
     /* Feed urgency to the renderer so the squeeze and wiggle tighten as it
      * gets worse, instead of one flat "holding" look the whole time. */
@@ -316,6 +458,7 @@ void care_tick(void)
             if (ui_pet_current() == PET_ANIM_HOLDING) ui_pet_play(PET_ANIM_SAD);
             ui_bubble_say(BUBBLE_T0_CRITICAL, "Uh oh... I couldn't hold it.");
             Serial.println("BATHROOM accident - mess left on the floor");
+            persist_mark_dirty("accident");
         }
     } else if (ui_pet_current() == PET_ANIM_HOLDING) {
         ui_pet_play(PET_ANIM_IDLE);
@@ -331,7 +474,7 @@ void care_tick(void)
  * resolves rather than on the button press, so what you see and what the
  * numbers do stay in step. */
 
-typedef enum { FD_NONE = 0, FD_DROP, FD_ACT } fd_phase_t;
+typedef enum { FD_NONE = 0, FD_DROP, FD_APPROACH, FD_ACT } fd_phase_t;
 
 static fd_phase_t   s_fd = FD_NONE;
 static uint32_t     s_fd_t0;
@@ -339,6 +482,8 @@ static food_t       s_fd_food;
 static feed_result_t s_fd_res;
 static lv_obj_t    *s_fd_obj;
 static uint32_t     s_fd_act_ms;
+static lv_coord_t   s_fd_x, s_fd_y;      /* where the food comes to rest */
+static bool         s_fd_bitten_shown;
 
 /* Pure: works out what WOULD happen, without changing anything. */
 static feed_result_t decide(food_t f, const pet_state_t *p)
@@ -374,13 +519,13 @@ static void apply_feed(food_t f, feed_result_t r)
         p->hunger    = clamp100(p->hunger + BURGER_HUNGER * FOOD_PARTIAL_FRACTION);
         p->weight_g += BURGER_WEIGHT_G * FOOD_PARTIAL_FRACTION;
         p->meals++;
-        mess_add(MESS_FOOD, f, true);      /* visibly half-eaten */
-        ui_pet_play(PET_ANIM_REFUSE);
+        /* the leftover is placed by the sequence, at the food's location */
+        ui_pet_play(PET_ANIM_EATING);
         ui_bubble_say(BUBBLE_T1_REACTION, "I can't finish it all...");
         break;
 
     default:    /* refused, and it ends up on the floor */
-        mess_add(MESS_FOOD, f, false);     /* untouched, dropped */
+        mess_add_at(MESS_FOOD, f, false, s_fd_x, s_fd_y);   /* left where it fell */
         ui_pet_play(PET_ANIM_REFUSE);
         ui_bubble_say(BUBBLE_T1_REACTION, "No thanks, I'm stuffed!");
         break;
@@ -391,6 +536,7 @@ static void apply_feed(food_t f, feed_result_t r)
 
     Serial.printf("FEED %-6s -> %-24s hunger %.0f  weight %.1f g\n",
                   care_food_name(f), care_feed_result_name(r), p->hunger, p->weight_g);
+    persist_mark_dirty("fed");
 }
 
 feed_result_t care_feed(food_t f)
@@ -409,13 +555,25 @@ feed_result_t care_feed(food_t f)
     s_fd_t0   = millis();
     s_fd      = FD_DROP;
 
+    /* A randomised, reachable spot - NOT wherever the Visitor happens to be.
+     * The decision to accept was already made above, before any walking, so
+     * a refusal never involves trudging over first. */
+    s_fd_x = (lv_coord_t)random(FOOD_ZONE_X_MIN, FOOD_ZONE_X_MAX + 1);
+    s_fd_y = (lv_coord_t)random(FOOD_ZONE_Y_MIN, FOOD_ZONE_Y_MAX + 1);
+    s_fd_bitten_shown = false;
+
     s_fd_obj = lv_obj_create(s_room);
     lv_obj_remove_style_all(s_fd_obj);
     lv_obj_clear_flag(s_fd_obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     build_food_shape(s_fd_obj, f, false);
-    lv_obj_set_pos(s_fd_obj, ui_pet_x() + PET_BOX_PX / 2 - 20, -40);
+    lv_obj_set_pos(s_fd_obj, s_fd_x, -40);
 
-    Serial.printf("FEED %s -> dropping in...\n", care_food_name(f));
+    /* Autonomous wandering would fight the scripted approach. */
+    ui_pet_set_wander(false);
+
+    Serial.printf("FEED %s -> dropping at (%d,%d), decision: %s\n",
+                  care_food_name(f), (int)s_fd_x, (int)s_fd_y,
+                  care_feed_result_name(s_fd_res));
     return s_fd_res;
 }
 
@@ -431,26 +589,69 @@ void care_anim_tick(void)
     const uint32_t el  = now - s_fd_t0;
 
     if (s_fd == FD_DROP) {
-        /* Track the pet while the food falls, so a wandering Visitor still
-         * ends up under it rather than watching it land somewhere else. */
-        const lv_coord_t tx = ui_pet_x() + PET_BOX_PX / 2 - 20;
-        const lv_coord_t ty = ui_pet_y() + 72;
         float t = (float)el / (float)FOOD_DROP_MS;
         if (t >= 1.0f) {
-            apply_feed(s_fd_food, s_fd_res);
-            if (s_fd_obj) { lv_obj_del(s_fd_obj); s_fd_obj = nullptr; }
-            s_fd_act_ms = (s_fd_res == FEED_EATEN) ? FOOD_EAT_MS : FOOD_REFUSE_MS;
-            s_fd_t0 = now;
-            s_fd = FD_ACT;
+            if (s_fd_obj) lv_obj_set_pos(s_fd_obj, s_fd_x, s_fd_y);
+            if (s_fd_res == FEED_DROPPED) {
+                /* Refused: it does NOT walk over. It shakes its head where
+                 * it stands and the food stays put as a mess. */
+                apply_feed(s_fd_food, s_fd_res);
+                if (s_fd_obj) { lv_obj_del(s_fd_obj); s_fd_obj = nullptr; }
+                s_fd_act_ms = FOOD_REFUSE_MS;
+                s_fd_t0 = now;
+                s_fd = FD_ACT;
+            } else {
+                /* Accepted: walk to it and stop alongside, so the Visitor
+                 * appears to face what it is about to eat. */
+                ui_pet_walk_to((lv_coord_t)(s_fd_x + 20 - PET_BOX_PX / 2),
+                               (lv_coord_t)(s_fd_y - 110));
+                s_fd_t0 = now;
+                s_fd = FD_APPROACH;
+            }
             return;
         }
-        /* ease-in: it falls, it does not glide */
-        const float te = t * t;
-        if (s_fd_obj) lv_obj_set_pos(s_fd_obj, tx, (lv_coord_t)(-40 + (ty + 40) * te));
+        const float te = t * t;      /* ease-in: it falls, it does not glide */
+        if (s_fd_obj) lv_obj_set_pos(s_fd_obj, s_fd_x,
+                                     (lv_coord_t)(-40 + (s_fd_y + 40) * te));
         return;
     }
 
-    if (el >= s_fd_act_ms) s_fd = FD_NONE;
+    if (s_fd == FD_APPROACH) {
+        /* Arrived when the walk ends. The timeout is a safety bound only -
+         * without it an interrupted walk would strand the sequence. */
+        if (ui_pet_current() != PET_ANIM_WALK || el >= FOOD_APPROACH_MAX_MS) {
+            apply_feed(s_fd_food, s_fd_res);
+            s_fd_act_ms = (s_fd_res == FEED_PARTIAL) ? FOOD_EAT_MS : FOOD_EAT_MS;
+            s_fd_t0 = now;
+            s_fd = FD_ACT;
+        }
+        return;
+    }
+
+    /* FD_ACT - the food visibly goes as it is eaten */
+    if (s_fd_obj && s_fd_res != FEED_DROPPED) {
+        const float t = (float)el / (float)s_fd_act_ms;
+        if (!s_fd_bitten_shown && t >= 0.40f) {
+            s_fd_bitten_shown = true;
+            build_food_shape(s_fd_obj, s_fd_food, true);   /* a bite is gone */
+            lv_obj_set_pos(s_fd_obj, s_fd_x, s_fd_y);
+        }
+        if (t >= 0.55f) {
+            lv_opa_t o = (lv_opa_t)(LV_OPA_COVER * (1.0f - (t - 0.55f) / 0.45f));
+            lv_obj_set_style_opa(s_fd_obj, o, 0);
+        }
+    }
+
+    if (el >= s_fd_act_ms) {
+        if (s_fd_res == FEED_PARTIAL) {
+            /* the recognisable half-eaten burger stays exactly where it was
+             * eaten, not teleported to a floor slot */
+            mess_add_at(MESS_FOOD, s_fd_food, true, s_fd_x, s_fd_y);
+        }
+        if (s_fd_obj) { lv_obj_del(s_fd_obj); s_fd_obj = nullptr; }
+        ui_pet_set_wander(true);        /* normal wandering resumes */
+        s_fd = FD_NONE;
+    }
 }
 
 void care_bathroom(void)
@@ -558,6 +759,7 @@ void care_clean(void)
 
     ui_pet_play(PET_ANIM_CLEANING);   /* scoots, then hops happily itself */
     Serial.printf("CLEAN removing %u mess(es), cleanliness -> %.0f\n", n, p->cleanliness);
+    persist_mark_dirty("cleaned");
 
     if (n == 0) {
         s_cl_active = false;
@@ -593,13 +795,132 @@ bool care_is_holding(void) { return ui_pet_current() == PET_ANIM_HOLDING; }
 
 /* --- test hooks ---------------------------------------------------------- */
 
+
+/* --- bed ----------------------------------------------------------------
+ * Grows with the Visitor: a small cot for a Baby up to a proper bed for an
+ * Adult. Built from primitives, sized and detailed per stage - enough that
+ * it reads as "the bed grew" without needing art. */
+static void build_bed(uint8_t stage)
+{
+    if (!s_room) return;
+    if (!s_bed) {
+        s_bed = lv_obj_create(s_room);
+        lv_obj_remove_style_all(s_bed);
+        lv_obj_clear_flag(s_bed, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    }
+    lv_obj_clean(s_bed);
+
+    lv_coord_t w, h; uint32_t frame, sheet, pillow;
+    switch (stage) {
+        case STAGE_BABY: w = 132; h = 56; frame = 0xC98BB0; sheet = 0xF4D9E6; pillow = 0xFFFFFF; break;
+        case STAGE_KID:  w = 158; h = 60; frame = 0x7FA8E8; sheet = 0xCFE0F7; pillow = 0xFFFFFF; break;
+        case STAGE_TEEN: w = 182; h = 64; frame = 0x6E7B96; sheet = 0xC2CBDD; pillow = 0xF2F4F8; break;
+        default:         w = 206; h = 68; frame = 0x8A6340; sheet = 0xD8C6AE; pillow = 0xFFFFFF; break;
+    }
+
+    lv_obj_set_size(s_bed, w, h);
+    lv_obj_set_pos(s_bed, BED_CX - w / 2, BED_CY - h / 2);
+
+    shape(s_bed, w, h, 0, 0, 10, frame);                     /* frame       */
+    shape(s_bed, w - 14, h - 20, 7, 12, 7, sheet);           /* blanket     */
+    shape(s_bed, w / 4, h - 26, 11, 8, 6, pillow);           /* pillow      */
+    if (stage >= STAGE_TEEN)                                  /* headboard  */
+        shape(s_bed, 8, h + 10, w - 10, -10, 4, frame);
+    if (stage == STAGE_BABY) {                                /* cot bars   */
+        for (int i = 0; i < 4; i++)
+            shape(s_bed, 3, 14, 16 + i * 26, -12, 2, frame);
+    }
+    lv_obj_clear_flag(s_bed, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_background(s_bed);      /* pet is drawn in front of it */
+}
+
+static void bed_hide(void) { if (s_bed) lv_obj_add_flag(s_bed, LV_OBJ_FLAG_HIDDEN); }
+
+/* Lights drive the real panel brightness. The daytime value is the config
+ * constant, never overwritten - turning the lights back on restores it. */
+static void apply_lights_brightness(void)
+{
+    bsp_set_brightness(s_lights_on ? BRIGHT_FULL : LIGHTS_OFF_BRIGHTNESS);
+}
+
+bool care_lights_on(void)          { return s_lights_on; }
+void care_set_lights(bool on)      { s_lights_on = on; apply_lights_brightness(); }
+
+/* --- persistence helpers -------------------------------------------------
+ * Messes are saved and restored with their exact type, food, bitten state,
+ * position and accumulated drain. A restored mess is the SAME mess, not a
+ * fresh generic one - an old poop keeps its stink and old food keeps the
+ * penalty it already took. */
+void care_restore_mess(uint8_t type, uint8_t food, bool bitten,
+                       uint32_t age_ms, float drained, int16_t x, int16_t y)
+{
+    for (uint8_t i = 0; i < MESS_MAX; i++) {
+        if (s_mess[i].type != MESS_NONE) continue;
+        s_mess[i].type     = (mess_type_t)type;
+        s_mess[i].food     = (food_t)food;
+        s_mess[i].bitten   = bitten;
+        s_mess[i].age_ms   = age_ms;
+        s_mess[i].drained  = drained;
+        s_mess[i].stinking = (type == MESS_POOP && age_ms >= STINK_AFTER_MS);
+        if (!s_mess[i].obj && s_room) {
+            s_mess[i].obj = lv_obj_create(s_room);
+            lv_obj_remove_style_all(s_mess[i].obj);
+            lv_obj_clear_flag(s_mess[i].obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        }
+        mess_style(&s_mess[i], i);
+        if (x >= 0) {
+            s_mess[i].x = x; s_mess[i].y = y;
+            lv_obj_set_pos(s_mess[i].obj, x, y);
+        }
+        pet_mutable()->mess_count = care_mess_count();
+        return;
+    }
+}
+
+uint8_t care_mess_snapshot(uint8_t idx, uint8_t *type, uint8_t *food,
+                           bool *bitten, uint32_t *age_ms, float *drained,
+                           int16_t *x, int16_t *y)
+{
+    if (idx >= MESS_MAX || s_mess[idx].type == MESS_NONE) return 0;
+    *type = (uint8_t)s_mess[idx].type;
+    *food = (uint8_t)s_mess[idx].food;
+    *bitten = s_mess[idx].bitten;
+    *age_ms = s_mess[idx].age_ms;
+    *drained = s_mess[idx].drained;
+    *x = s_mess[idx].x; *y = s_mess[idx].y;
+    return 1;
+}
+
+void care_reset(void)
+{
+    for (uint8_t i = 0; i < MESS_MAX; i++) {
+        s_mess[i].type = MESS_NONE;
+        s_mess[i].drained = 0.0f;
+        s_mess[i].age_ms = 0;
+        s_mess[i].stinking = false;
+        if (s_mess[i].obj) lv_obj_add_flag(s_mess[i].obj, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_fd_obj) { lv_obj_del(s_fd_obj); s_fd_obj = nullptr; }
+    s_fd = FD_NONE;
+    s_cl_active = false;
+    s_bath_active = false;
+    s_was_urgent = false;
+    s_last_ms = millis();
+    ui_pet_set_wander(true);
+    ui_pet_set_urgency(0.0f);
+    ui_pet_play(PET_ANIM_IDLE);
+    pet_mutable()->mess_count = 0;
+    Serial.println("CARE reset: floor cleared, sequences cancelled");
+}
+
 void care_fast_forward(uint32_t minutes)
 {
     /* Applied in one-minute steps rather than one big dt, so mess grace
      * periods and per-mess drain caps resolve exactly as they would in real
      * time. A single 6-hour dt would skip straight past the grace window. */
     Serial.printf("FAST FORWARD %lu min\n", (unsigned long)minutes);
-    for (uint32_t i = 0; i < minutes; i++) advance(60000UL);
+    sim_ctx_t ctx = { pet_get()->asleep, care_lights_on(), false };
+    for (uint32_t i = 0; i < minutes; i++) care_advance(60000UL, &ctx, nullptr);
     care_report();
 }
 

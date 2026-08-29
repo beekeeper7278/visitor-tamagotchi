@@ -20,6 +20,10 @@ void menu_close(void);
 void menu_toggle(void);
 bool menu_is_open(void);
 
+/* Rebuild the current page in place - used when a control changes the
+ * label it is drawn with, e.g. the Lights ON/OFF state. */
+void    menu_rebuild_page(void);
+
 void    menu_goto(uint8_t page);        /* absolute, wraps                  */
 void    menu_step(int8_t dir);          /* -1 / +1, wraps                   */
 uint8_t menu_page(void);

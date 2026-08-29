@@ -25,6 +25,9 @@
 #include "pages.h"
 #include "menu.h"
 #include "btn.h"
+#include "rtc.h"
+#include "sim.h"
+#include "persist.h"
 
 static void imu_timer_cb(lv_timer_t *t)  { (void)t; diag_imu_tick();  }
 static void boot_timer_cb(lv_timer_t *t) { (void)t; diag_boot_tick(); btn_tick(); }
@@ -39,6 +42,7 @@ static void sim_timer_cb(lv_timer_t *t)
 {
     (void)t;
     care_tick();
+    persist_tick();
     scr_main_hud_refresh();
 
     /* Feed real pet state into the renderer's live modifiers, so weight and
@@ -49,6 +53,10 @@ static void sim_timer_cb(lv_timer_t *t)
     lv.cleanliness = (uint8_t)pet_get()->cleanliness;
     ui_pet_set_live(&lv);
 }
+
+/* t_save - the periodic dirty-flag save. storage_save() still enforces the
+ * minimum interval and the shadow compare, so a quiet pet writes nothing. */
+static void save_timer_cb(lv_timer_t *t) { (void)t; persist_save(false); }
 
 static void anim_timer_cb(lv_timer_t *t)
 {
@@ -95,9 +103,16 @@ void setup()
      * one keypress away and costs nothing to keep. */
     pet_init();
     btn_init(menu_toggle);
+    rtc_begin();
 
     ui_diag_create();
     scr_main_create();
+    /* Load AFTER the room layer exists: restored messes are real objects and
+     * need somewhere to be drawn. */
+    persist_load();
+    /* RAW state, before any catch-up or live tick can touch it. This is the
+     * value that must match what was saved. */
+    persist_print_state("RAW LOADED");
     scr_main_show();
     lv_refr_now(NULL);
 
@@ -117,6 +132,30 @@ void setup()
     diag_summary();
     diag_help();
 
+    /* Offline catch-up. Only ever runs against a TRUSTED clock: with the OS
+     * flag set we have no idea whether the elapsed time is real, and
+     * simulating three days that may not have happened is worse than
+     * simulating nothing. */
+    {
+        char tb[32];
+        rtc_format(rtc_now(), tb, sizeof(tb));
+        Serial.printf("\nRTC: %s   time now: %s\n",
+                      rtc_health_name(rtc_health()), tb);
+
+        if (rtc_trusted() && pet_get()->last_sim_ts) {
+            sim_report_t rep;
+            sim_catch_up(pet_get()->last_sim_ts, rtc_now(), &rep);
+            sim_print_report();
+            const char *g = sim_return_greeting(&rep);
+            if (g) ui_bubble_say(BUBBLE_T0_CRITICAL, g);
+        } else if (!rtc_trusted()) {
+            Serial.println("Clock not trusted - no catch-up. Set the time on Pet Info.");
+        }
+        persist_print_state("SIMULATED");
+        pet_mutable()->last_sim_ts = rtc_now();
+        if (rtc_trusted()) persist_save(true);   /* anchor the new baseline */
+    }
+
     Serial.println();
     Serial.printf("PET: form %s, animation at %d fps\n",
                   forms_name(ui_pet_get_form()), 1000 / T_ANIM_MS);
@@ -129,6 +168,7 @@ void setup()
     lv_timer_create(cons_timer_cb, 30,    NULL);
     lv_timer_create(anim_timer_cb, T_ANIM_MS, NULL);
     lv_timer_create(sim_timer_cb,  T_SIM_MS,  NULL);
+    lv_timer_create(save_timer_cb, T_SAVE_MS, NULL);
     lv_timer_create(heartbeat_cb,  10000, NULL);
 }
 

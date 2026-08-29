@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define SAVE_SCHEMA_VERSION 1
+#define SAVE_SCHEMA_VERSION 2
 
 /* Journal entry classes - see design doc section 11 */
 enum { JRN_MILESTONE = 0, JRN_RECORD = 1, JRN_FLAVOUR = 2 };
@@ -75,7 +75,32 @@ typedef struct __attribute__((packed)) {
 
     /* --- journal --- */
     journal_entry_t journal[24];
+
+    /* --- schema 2 additions ------------------------------------------------
+     * APPENDED ON PURPOSE. v1 is then a strict byte prefix of v2, so the
+     * migration is "copy the old blob, zero the tail" - which is both trivial
+     * and actually testable, rather than a field-by-field remap that nobody
+     * ever exercises.
+     *
+     * Messes are stored individually, not just as a count: a poop left before
+     * shutdown must come back as the SAME poop, in the same place, with the
+     * right age and the cleanliness it has already charged - otherwise
+     * reboots either double-charge or reset the penalty.
+     *
+     * Compressed to fit the 384 B budget: age in minutes (45 days max),
+     * drained in whole points (caps are 15/30), position halved (368x448
+     * fits in 0..255 at /2, which is 2 px of placement accuracy). */
+    uint8_t  bathroom;            /* 0..100                                 */
+    uint16_t accidents;
+    uint8_t  mess_type[4];        /* 0 none, 1 food, 2 poop                 */
+    uint8_t  mess_food[4];        /* food_t in low bits, bit7 = bitten      */
+    uint16_t mess_age_min[4];
+    uint8_t  mess_drained[4];
+    uint8_t  mess_x2[4], mess_y2[4];
 } save_t;
+
+#define SAVE_V1_SIZE 332          /* frozen: sizeof(save_t) at schema 1     */
+#define MESS_BITTEN_BIT 0x80
 
 typedef enum {
     LOAD_OK = 0,        /* clean read at the current schema      */
@@ -93,6 +118,11 @@ bool          storage_wipe(void);
 
 /* Diagnostics */
 uint32_t storage_crc32(const uint8_t *data, size_t len);
+
+/* TEST ONLY: writes a synthetic, CRC-valid schema-1 blob so the v1 -> v2
+ * migration can actually be exercised on hardware. A migration path that has
+ * never been run is a guess, not a feature. */
+bool storage_write_fake_v1(float hunger, float weight_g, uint16_t days);
 uint32_t storage_write_count(void);      /* writes since boot */
 uint32_t storage_skipped_count(void);    /* shadow-compare hits */
 const char *storage_load_result_str(load_result_t r);

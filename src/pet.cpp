@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include "config.h"
 #include "forms.h"
+#include <string.h>
 #include "pet.h"
 
 static pet_state_t s;
@@ -25,9 +26,17 @@ void pet_init(void)
     s.bathroom    = 0.0f;
     s.mess_count  = 0;
     s.meals = s.cakes_eaten = s.times_dirty = s.accidents = 0;
+    s.lights_forgotten = 0;
+    memset(s.stage_day, 0, sizeof(s.stage_day));
+    s.hatch_ts = 0;
+    s.last_sim_ts = 0;
 }
 
 const pet_state_t *pet_get(void) { return &s; }
+
+static bool s_suspended = false;
+void pet_set_sim_suspended(bool on) { s_suspended = on; }
+bool pet_sim_suspended(void)        { return s_suspended; }
 
 /* First match wins, exactly as specified. Deliberately a pure function of
  * state with no globals and no LVGL, so it can be reasoned about on its own. */
@@ -62,11 +71,53 @@ const char *pet_mood_name(mood_t m)
 const char *pet_stage_name(uint8_t stage)
 {
     switch (stage) {
-        case 0:  return "Baby";
-        case 1:  return "Kid";
-        case 2:  return "Teen";
-        default: return "Adult";
+        case STAGE_EGG:  return "Egg";
+        case STAGE_BABY: return "Baby";
+        case STAGE_KID:  return "Kid";
+        case STAGE_TEEN: return "Teen";
+        default:         return "Adult";
     }
+}
+
+static uint8_t stage_for_day(uint16_t day)
+{
+    if (day >= STAGE_DAY_ADULT) return STAGE_ADULT;
+    if (day >= STAGE_DAY_TEEN)  return STAGE_TEEN;
+    if (day >= STAGE_DAY_KID)   return STAGE_KID;
+    return STAGE_BABY;
+}
+
+uint8_t pet_apply_stage_for_day(uint16_t day)
+{
+    /* Without a hatch timestamp there is no real calendar age, so the
+     * Visitor stays an Egg rather than aging off an untrusted clock. */
+    if (!s.hatch_ts) {
+        if (s.stage != STAGE_EGG) s.stage = STAGE_EGG;
+        return 0;
+    }
+
+    const uint8_t target = stage_for_day(day);
+    uint8_t moved = 0;
+
+    /* Step through every boundary in order, recording each against the day it
+     * ACTUALLY belongs to rather than the day we noticed. An 8-day absence
+     * must record Baby->Kid at day 3 and Kid->Teen at day 7, not both at
+     * day 8 - the journal and evolution will read these timings later, and
+     * "everything happened at once" would be wrong history. */
+    while (s.stage < target) {
+        const uint8_t from = s.stage;
+        s.stage++;
+        moved++;
+        const uint16_t boundary =
+            (s.stage == STAGE_KID)   ? STAGE_DAY_KID   :
+            (s.stage == STAGE_TEEN)  ? STAGE_DAY_TEEN  :
+            (s.stage == STAGE_ADULT) ? STAGE_DAY_ADULT : 0;
+        s.stage_day[s.stage] = boundary;
+        Serial.printf("STAGE: %s -> %s (on day %u; noticed on day %u)\n",
+                      pet_stage_name(from), pet_stage_name(s.stage),
+                      boundary, day);
+    }
+    return moved;
 }
 
 float pet_weight_norm(void)

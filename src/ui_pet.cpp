@@ -53,6 +53,7 @@ static lv_coord_t  s_pos_x     = PET_HOME_X;
 static lv_coord_t  s_pos_y     = PET_HOME_Y;
 static lv_coord_t  s_walk_from_y = PET_HOME_Y, s_walk_to_y = PET_HOME_Y;
 static uint32_t    s_wander_at  = 0;   /* next autonomous walk */
+static bool        s_wander_on  = true;
 static pet_anim_done_cb_t s_done_cb = nullptr;
 /* bathroom sub-phases: 0 running out, 1 away, 2 running back */
 static uint8_t     s_bath_phase = 0;
@@ -335,8 +336,10 @@ static void layout(void)
 {
     const pet_form_t *f = forms_get(s_form_id);
 
-    const bool hold_face = (s_anim == PET_ANIM_HOLDING);
+    const bool hold_face  = (s_anim == PET_ANIM_HOLDING);
+    const bool sleep_face = (s_anim == PET_ANIM_SLEEPING);
     const int eye   = (s_anim_eye >= 0) ? s_anim_eye
+                    : sleep_face ? EYE_SLEEPY         /* closed, asleep     */
                     : hold_face ? EYE_SLEEPY          /* tense, half-shut   */
                     : (s_eye_ovr  >= 0) ? s_eye_ovr  : f->eye_style;
     /* HOLDING used to force MOUTH_WOBBLE, but that style is a two-arc
@@ -344,6 +347,7 @@ static void layout(void)
      * discomfort. A small flat grimace is far more natural for "I need to
      * go" - strained rather than broken. */
     const int mouth = (s_anim_mouth >= 0) ? s_anim_mouth
+                    : sleep_face ? MOUTH_SMILE
                     : hold_face ? MOUTH_FLAT
                     : (s_mouth_ovr >= 0) ? s_mouth_ovr : f->mouth_style;
     const int brow  = hold_face ? BROW_WORRIED
@@ -357,7 +361,8 @@ static void layout(void)
     w *= 1.0f + (s_live.weight_norm - 0.5f) * 2.0f * (PET_WEIGHT_SCALE_PCT / 100.0f);
 
     /* breathing, half speed when sad */
-    const uint32_t bp = ANIM_BREATHE_PERIOD_MS * (s_anim == PET_ANIM_SAD ? 2u : 1u);
+    const uint32_t bp = ANIM_BREATHE_PERIOD_MS *
+                        ((s_anim == PET_ANIM_SAD || s_anim == PET_ANIM_SLEEPING) ? 2u : 1u);
     h += ANIM_BREATHE_AMP_PX * sinf(phase(bp));
 
     if (s_anim == PET_ANIM_SAD) h -= ANIM_SAD_DROP_PX;
@@ -367,6 +372,8 @@ static void layout(void)
         w -= (lv_coord_t)(8 + 6 * s_urgency);      /* squeeze in */
         h += (lv_coord_t)(5 + 4 * s_urgency);
     }
+    /* Asleep: settled and squashed down, as if lying rather than standing. */
+    if (s_anim == PET_ANIM_SLEEPING) { w += 10; h -= 16; }
 
     /* walk squash */
     w += s_squash;
@@ -538,6 +545,25 @@ pet_anim_t ui_pet_current(void) { return s_anim; }
 void ui_pet_force_blink(void) { s_blink_t0 = millis(); }
 void ui_pet_set_done_cb(pet_anim_done_cb_t cb) { s_done_cb = cb; }
 void ui_pet_set_urgency(float u) { s_urgency = u < 0 ? 0 : (u > 1 ? 1 : u); }
+void ui_pet_set_wander(bool on)  { s_wander_on = on; }
+
+void ui_pet_walk_to(lv_coord_t x, lv_coord_t y)
+{
+    if (x < PET_ROAM_X_MIN) x = PET_ROAM_X_MIN;
+    if (x > PET_ROAM_X_MAX) x = PET_ROAM_X_MAX;
+    if (y < PET_ROAM_Y_MIN) y = PET_ROAM_Y_MIN;
+    if (y > PET_ROAM_Y_MAX) y = PET_ROAM_Y_MAX;
+
+    /* Set the targets first, then enter WALK directly - going through
+     * ui_pet_play() would immediately overwrite them with a random
+     * destination, which is the whole thing this function exists to avoid. */
+    s_walk_from   = s_pos_x;
+    s_walk_from_y = s_pos_y;
+    s_walk_to     = x;
+    s_walk_to_y   = y;
+    s_anim    = PET_ANIM_WALK;
+    s_anim_t0 = millis();
+}
 
 bool       ui_pet_hidden(void)     { return o_root && lv_obj_has_flag(o_root, LV_OBJ_FLAG_HIDDEN); }
 lv_coord_t ui_pet_x(void)          { return s_pos_x; }
@@ -611,6 +637,11 @@ void ui_pet_tick(void)
         }
         break;
     }
+    case PET_ANIM_SLEEPING:
+        /* Nothing to drive: the slow breathe and the sleepy face are handled
+         * in layout(), and the pet stays put in the bed. */
+        break;
+
     case PET_ANIM_HOLDING: {
         /* Restless fidget that tightens with urgency: a slow shift early on,
          * a visible squeeze-and-wiggle when it is nearly too late. Stillness
@@ -702,7 +733,7 @@ void ui_pet_tick(void)
 
     case PET_ANIM_IDLE:
         /* wander off on its own schedule */
-        if (s_wander_at && (int32_t)(now - s_wander_at) >= 0) {
+        if (s_wander_on && s_wander_at && (int32_t)(now - s_wander_at) >= 0) {
             ui_pet_play(PET_ANIM_WALK);
         }
         break;
@@ -751,6 +782,7 @@ const char *ui_pet_anim_name(pet_anim_t a)
         case PET_ANIM_EATING:   return "eating";
         case PET_ANIM_REFUSE:   return "refuse";
         case PET_ANIM_CLEANING: return "cleaning";
+        case PET_ANIM_SLEEPING: return "sleeping";
         default:             return "?";
     }
 }

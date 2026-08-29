@@ -17,7 +17,13 @@
 extern "C" {
 #endif
 
-enum { PAGE_STATS = 0, PAGE_FOOD, PAGE_GAMES, PAGE_CARE, PAGE_CLOCK, PAGE_JOURNAL };
+/* Page ORDER. Care sits before Games by request - a deliberate deviation
+ * from the brief's section 4 ordering, which had Games third. Care is the
+ * page a parent reaches for; Games is the one a child browses.
+ *
+ * Everything else keys off these values (page_create, page_name, the dots),
+ * so reordering here reorders the pager with no other change. */
+enum { PAGE_STATS = 0, PAGE_FOOD, PAGE_CARE, PAGE_GAMES, PAGE_CLOCK, PAGE_JOURNAL };
 
 lv_obj_t   *page_create(uint8_t idx, lv_obj_t *parent);
 const char *page_name(uint8_t idx);

@@ -39,7 +39,15 @@ typedef struct {
     /* --- 3B --- */
     float    bathroom;       /* 0..100, 100 = accident imminent            */
     uint8_t  mess_count;
-    uint16_t meals, cakes_eaten, times_dirty, accidents;
+    uint16_t meals, cakes_eaten, times_dirty, accidents, lights_forgotten;
+
+    /* --- 6: persistence / catch-up anchors --- */
+    uint32_t hatch_ts;       /* 0 until the clock is first trusted         */
+    uint32_t last_sim_ts;    /* last moment the simulation was up to date  */
+    /* The day each stage was ENTERED, indexed by stage. Recorded against the
+     * configured boundary, not the day the transition was noticed, so an
+     * offline gap that spans several stages still yields correct history. */
+    uint16_t stage_day[5];
 } pet_state_t;
 
 void pet_init(void);
@@ -52,9 +60,21 @@ const char *pet_stage_name(uint8_t stage);
 /* Normalised weight for the renderer's +/-20% body_w modifier. */
 float pet_weight_norm(void);
 
+/* Advance the stage to whatever `day` implies, stepping through EVERY
+ * boundary crossed in order and logging each - so an offline gap that spans
+ * Baby to Teen records both transitions rather than jumping silently. The
+ * stage only; the FORM is Phase 8. Returns the number of transitions made. */
+uint8_t pet_apply_stage_for_day(uint16_t day);
+
 /* Mutable access for the care mechanics. Deliberately not part of the public
  * read-only surface that ui uses: ui reads pet, only care writes it. */
 pet_state_t *pet_mutable(void);
+
+/* Freeze all simulation and user-driven mutation. Exists so the persistence
+ * fidelity test can prove pack/save/load is exact INDEPENDENTLY of the time
+ * simulator - otherwise a decayed value is indistinguishable from a lost one. */
+void pet_set_sim_suspended(bool on);
+bool pet_sim_suspended(void);
 
 #ifdef __cplusplus
 }

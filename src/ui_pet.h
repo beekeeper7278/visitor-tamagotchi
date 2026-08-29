@@ -31,6 +31,7 @@ typedef enum {
     PET_ANIM_EATING,     /* mouth open/close while food is consumed         */
     PET_ANIM_REFUSE,     /* head shake "no" - won't eat / can't finish      */
     PET_ANIM_CLEANING,   /* joins in: a busy little side-to-side scoot      */
+    PET_ANIM_SLEEPING,   /* settled in bed: sleepy eyes, slow breathing     */
     PET_ANIM_COUNT
 } pet_anim_t;
 
@@ -82,6 +83,15 @@ void ui_pet_set_done_cb(pet_anim_done_cb_t cb);
 
 /* 0..1 urgency, drives how hard the holding pose squeezes and wiggles. */
 void ui_pet_set_urgency(float u);
+
+/* Directed walk to an exact spot, reusing the normal walk animation. Used
+ * for approaching food; the destination is clamped to the roaming area so
+ * the pet can never be sent off-screen. */
+void ui_pet_walk_to(lv_coord_t x, lv_coord_t y);
+
+/* Gate autonomous wandering, so a scripted walk is not fighting a random
+ * one. Always re-enable it when the script finishes. */
+void ui_pet_set_wander(bool on);
 
 /* Centre of the pet in screen coords - the bubble anchors to this. */
 void ui_pet_anchor(lv_coord_t *x, lv_coord_t *top_y);

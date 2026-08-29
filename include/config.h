@@ -64,6 +64,72 @@
 #define NVS_VISIT_RECORDS       5
 #define SAVE_MIN_INTERVAL_MS    60000UL         /* hard floor between writes */
 
+/* --- Life stages [MILESTONE 5] -----------------------------------------
+ * Day boundaries are the ones already agreed: Teen at day 7, Adult at
+ * day 13, visit ends at day 21. Kid at day 3 fills the gap between Baby and
+ * Teen. Egg/Newborn is the pre-hatch state: it lasts until a trusted clock
+ * establishes a hatch timestamp, because without a real date there is no
+ * such thing as "day 3".
+ *
+ * PHASE 5+6 SETS THE STAGE ONLY. Which Kid / Teen / Adult FORM the Visitor
+ * becomes is Phase 8 evolution work and is deliberately not decided here. */
+#define STAGE_EGG               0
+#define STAGE_BABY              1
+#define STAGE_KID               2
+#define STAGE_TEEN              3
+#define STAGE_ADULT             4
+
+#define STAGE_DAY_KID           3
+#define STAGE_DAY_TEEN          7
+#define STAGE_DAY_ADULT         13
+
+/* --- Sleep window [MILESTONE 5] ----------------------------------------
+ * Local wall-clock hours. Night sleep is the long one; the Baby also naps in
+ * the afternoon, and that nap is reconstructed on boot like any other sleep
+ * period. */
+#define SLEEP_START_HOUR        20
+#define SLEEP_END_HOUR          7
+#define NAP_START_HOUR          13
+#define NAP_END_HOUR            14
+#define NAP_MAX_STAGE           STAGE_BABY   /* babies nap; older stages do not */
+
+/* Sleep presentation. The bed sits centre-low; the Visitor walks to it and
+ * settles rather than the state changing invisibly. */
+#define BED_CX                  (BSP_LCD_W / 2)
+#define BED_CY                  300
+#define SLEEP_SPOT_X            (BED_CX - PET_BOX_PX / 2)
+#define SLEEP_SPOT_Y            (BED_CY - 118)
+
+/* Lights OFF dims the PANEL, using the verified brightness control rather
+ * than a translucent overlay - a real dim costs less power on AMOLED and
+ * looks like night instead of like fog. Never overwrites the daytime value. */
+#define LIGHTS_OFF_BRIGHTNESS   0x18
+#define LIGHTS_TOO_BRIGHT_MS    45000UL  /* min gap between complaints      */
+
+/* --- Offline catch-up caps [MILESTONE 6] -------------------------------
+ * TIME IS NEVER CAPPED. Age, days alive, stage timing and visit duration
+ * always advance by the full elapsed interval. What is capped is how much
+ * DAMAGE one absence may do, each stat independently, so a week in a drawer
+ * is a story rather than a dead pet.
+ *
+ * These are per-absence totals, not rates. */
+#define OFFLINE_HUNGER_MAX_DROP    55.0f
+#define OFFLINE_HAPPY_MAX_DROP     30.0f   /* gentle: never full -> zero    */
+#define OFFLINE_CLEAN_MAX_DROP     40.0f
+#define OFFLINE_MAX_ACCIDENTS      1       /* one unattended accident, max  */
+/* Where the need is parked once the offline accident cap is spent. Leaving
+ * it at 100 meant the live tick fired a SECOND accident within seconds of
+ * boot - technically one offline accident, but indistinguishable from two to
+ * anyone actually holding the device. Parking it urgent-but-not-overflowing
+ * returns a Visitor doing the potty dance with the normal grace period left
+ * to react. */
+#define OFFLINE_BATHROOM_PARK_PCT  95.0f
+#define OFFLINE_LONG_ABSENCE_SEC   (36L * 3600L)  /* "WHERE HAVE YOU BEEN?!" */
+#define OFFLINE_MIN_NOTICE_SEC     (10L * 60L)    /* below this, say nothing */
+
+/* Weight deliberately has NO offline rule: absence alone must not change it.
+ * See docs/PHASE5-6-OFFLINE-REQUIREMENTS.md. */
+
 /* --- Idle / burn-in [GUESS section 10] ---------------------------------- */
 #define IDLE_DIM1_MS            30000UL         /* -> 60% brightness */
 #define IDLE_DIM2_MS            120000UL        /* -> 25% brightness */
@@ -252,6 +318,16 @@
 #define FOOD_REFUSE_MS          800     /* head shake "no"                   */
 #define FOOD_SHAKES             3       /* how many times the head turns     */
 #define FOOD_SHAKE_PX           7
+
+/* Where food lands. Randomised within a reachable zone rather than dropped
+ * onto the Visitor: the point is that the Visitor goes TO its dinner. The
+ * zone is inset from every edge and sits above the floor mess strip, so a
+ * dropped item is always fully visible and never collides with the HUD. */
+#define FOOD_ZONE_X_MIN         30
+#define FOOD_ZONE_X_MAX         (BSP_LCD_W - 70)
+#define FOOD_ZONE_Y_MIN         190
+#define FOOD_ZONE_Y_MAX         320
+#define FOOD_APPROACH_MAX_MS    2500    /* safety bound on the walk         */
 
 /* --- Pager / menu [SPEC section 4] --------------------------------------
  * Only the CURRENT page exists as LVGL objects. On swipe the neighbour is
