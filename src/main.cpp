@@ -28,6 +28,8 @@
 #include "rtc.h"
 #include "sim.h"
 #include "persist.h"
+#include "gamerec.h"
+#include "games.h"
 
 static void imu_timer_cb(lv_timer_t *t)  { (void)t; diag_imu_tick();  }
 static void boot_timer_cb(lv_timer_t *t) { (void)t; diag_boot_tick(); btn_tick(); }
@@ -104,6 +106,7 @@ void setup()
     pet_init();
     btn_init(menu_toggle);
     rtc_begin();
+    gamerec_begin();
 
     ui_diag_create();
     scr_main_create();

@@ -13,6 +13,8 @@
 #include "rtc.h"
 #include "persist.h"
 #include "setclock.h"
+#include "games.h"
+#include "gamerec.h"
 
 /* --- shared page furniture ---------------------------------------------- */
 
@@ -171,16 +173,32 @@ static void build_food(lv_obj_t *p)
 
 /* --- 3. Games ------------------------------------------------------------ */
 
+static void game_cb(lv_event_t *e)
+{
+    if (menu_swipe_active()) return;
+    games_launch((uint8_t)(intptr_t)lv_event_get_user_data(e));
+}
+
 static void build_games(lv_obj_t *p)
 {
     title(p, "Games");
     const lv_coord_t S = 140, GAP = 16;
     const lv_coord_t x0 = (BSP_LCD_W - (2 * S + GAP)) / 2, y0 = 96;
-    card(p, "Reaction", x0,             y0,             S, S, 0xFF8A75, false);
-    card(p, "Higher",   x0 + S + GAP,   y0,             S, S, 0xF2C14E, false);
-    card(p, "Memory",   x0,             y0 + S + GAP,   S, S, 0x5FCBB4, false);
-    card(p, "Maze",     x0 + S + GAP,   y0 + S + GAP,   S, S, 0xA894EE, false);
-    note(p, "Games arrive in their own phase.", y0 + 2 * S + GAP + 14);
+    lv_obj_t *b;
+    b = card(p, "Reaction", x0,           y0,           S, S, 0xFF8A75, true);
+    lv_obj_add_event_cb(b, game_cb, LV_EVENT_CLICKED, (void *)(intptr_t)GAME_REACT);
+    b = card(p, "Higher",   x0 + S + GAP, y0,           S, S, 0xF2C14E, true);
+    lv_obj_add_event_cb(b, game_cb, LV_EVENT_CLICKED, (void *)(intptr_t)GAME_HILO);
+    b = card(p, "Memory",   x0,           y0 + S + GAP, S, S, 0x5FCBB4, true);
+    lv_obj_add_event_cb(b, game_cb, LV_EVENT_CLICKED, (void *)(intptr_t)GAME_MEMORY);
+    b = card(p, "Maze",     x0 + S + GAP, y0 + S + GAP, S, S, 0xA894EE, true);
+    lv_obj_add_event_cb(b, game_cb, LV_EVENT_CLICKED, (void *)(intptr_t)GAME_MAZE);
+
+    const gamerec_t *r = gamerec_get();
+    char b2[80];
+    snprintf(b2, sizeof(b2), "%u games played   favourite: %s",
+             r->total_games, gamerec_name(gamerec_favorite()));
+    note(p, b2, y0 + 2 * S + GAP + 14);
 }
 
 /* --- 4. Care ------------------------------------------------------------- */

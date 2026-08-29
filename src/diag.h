@@ -33,6 +33,10 @@ void diag_help(void);
 void diag_serial_tick(void);
 bool diag_imu_stream_enabled(void);
 
+/* Gravity in SCREEN axes (g), using the frozen verified mapping.
+ * +X right, +Y down, +Z into the screen. Used by the tilt maze. */
+bool diag_imu_read_screen(float *x, float *y, float *z);
+
 #ifdef __cplusplus
 }
 #endif

@@ -8,6 +8,7 @@
 #include "care.h"
 #include "rtc.h"
 #include "sim.h"
+#include "gamerec.h"
 
 static sim_report_t s_rep;
 
@@ -89,7 +90,8 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out)
     p->asleep = false;      /* you are here now, so it is awake */
 
     /* Every stage boundary the absence crossed, in order. */
-    pet_apply_stage_for_day(p->days_alive);
+    if (pet_apply_stage_for_day(p->days_alive) > 0)
+        gamerec_on_stage_change(p->stage);   /* fresh bests for a new tier */
 
     /* One "you left the lights on" mark per absence, not one per chunk -
      * otherwise a single forgetful night would score hundreds. */

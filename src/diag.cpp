@@ -17,6 +17,8 @@
 #include "sim.h"
 #include "persist.h"
 #include "setclock.h"
+#include "games.h"
+#include "gamerec.h"
 #include "menu.h"
 #include "pages.h"
 #include "pet.h"
@@ -382,6 +384,23 @@ static void imu_to_screen(int16_t ax, int16_t ay, int16_t az,
     *sz = BSP_IMU_Z_SIGN * raw[BSP_IMU_Z_SRC] / 8192.0f;
 }
 #endif
+
+/* Exported for the tilt maze. Uses the SAME frozen raw->screen mapping as
+ * the Phase 1 measurement - the maze must never carry its own copy of the
+ * axis signs, which is exactly how a second, subtly different mapping gets
+ * introduced. */
+bool diag_imu_read_screen(float *x, float *y, float *z)
+{
+#if BSP_IMU_AXES_VERIFIED
+    int16_t ax, ay, az;
+    if (!s_imu_ok || !imu_read_raw(&ax, &ay, &az)) return false;
+    imu_to_screen(ax, ay, az, x, y, z);
+    return true;
+#else
+    (void)x; (void)y; (void)z;
+    return false;
+#endif
+}
 
 void diag_imu_tick(void)
 {
@@ -1016,6 +1035,9 @@ void diag_help(void)
     Serial.println("  y  toggle simulation suspend");
     Serial.println("  N  clock -> 20:30 bedtime   G  -> 07:30 wake   A  -> 13:30 nap");
     Serial.println("  u  open the Set Date & Time screen");
+    Serial.println("  --- Phase 7: games ---");
+    Serial.println("  Q  Higher/Lower  q  Reaction  E  Memory  z  Tilt Maze");
+    Serial.println("  a  game records report   K  force-exit a game");
     Serial.println("  B  one sample bubble (cycles tiers)");
     Serial.println("  S  BUBBLE STRESS TEST - 20 requests, most should refuse");
     Serial.println("  L  BUBBLE LAYOUT TEST - 4 strings x 3 pet positions");
@@ -1108,6 +1130,13 @@ void diag_serial_tick(void)
             case 'u': setclock_open();
                       Serial.println("Set Date & Time opened (step 1 of 2)");
                       break;
+            case 'Q': games_launch(GAME_HILO);   break;
+            case 'q': games_launch(GAME_REACT);  break;
+            case 'E': games_launch(GAME_MEMORY); break;
+            case 'z': games_launch(GAME_MAZE);   break;
+            case 'a': gamerec_report();          break;
+            case 'Q'+128: break;
+            case 'K': games_force_exit();        break;
             case 'Y': diag_persist_fidelity();   break;
             case 'y': pet_set_sim_suspended(!pet_sim_suspended());
                       Serial.printf("simulation %s\n",
