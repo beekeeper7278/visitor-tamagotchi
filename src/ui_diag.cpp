@@ -5,6 +5,7 @@
 #include "bsp.h"
 #include "ui_diag.h"
 
+static lv_obj_t *s_scr;
 static lv_obj_t *s_status;
 static lv_obj_t *s_touch_dot;
 static lv_obj_t *s_touch_lbl;
@@ -28,7 +29,7 @@ static void touch_cb(lv_event_t *e)
  * column offset is wrong. */
 static void corner(lv_coord_t x, lv_coord_t y, lv_color_t c)
 {
-    lv_obj_t *o = lv_obj_create(lv_scr_act());
+    lv_obj_t *o = lv_obj_create(s_scr);
     lv_obj_remove_style_all(o);
     lv_obj_set_size(o, 24, 24);
     lv_obj_set_pos(o, x, y);
@@ -39,7 +40,7 @@ static void corner(lv_coord_t x, lv_coord_t y, lv_color_t c)
 
 static void swatch(lv_coord_t x, lv_coord_t y, lv_color_t c, const char *name)
 {
-    lv_obj_t *o = lv_obj_create(lv_scr_act());
+    lv_obj_t *o = lv_obj_create(s_scr);
     lv_obj_remove_style_all(o);
     lv_obj_set_size(o, 76, 56);
     lv_obj_set_pos(o, x, y);
@@ -48,7 +49,7 @@ static void swatch(lv_coord_t x, lv_coord_t y, lv_color_t c, const char *name)
     lv_obj_set_style_radius(o, 6, 0);
     lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *l = lv_label_create(lv_scr_act());
+    lv_obj_t *l = lv_label_create(s_scr);
     lv_label_set_text(l, name);
     lv_obj_set_style_text_color(l, lv_color_white(), 0);
     lv_obj_set_pos(l, x + 4, y + 60);
@@ -56,7 +57,10 @@ static void swatch(lv_coord_t x, lv_coord_t y, lv_color_t c, const char *name)
 
 void ui_diag_create(void)
 {
-    lv_obj_t *scr = lv_scr_act();
+    s_scr = lv_obj_create(NULL);
+    lv_obj_remove_style_all(s_scr);
+    lv_obj_clear_flag(s_scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *scr = s_scr;
     /* Dark background: AMOLED-friendly and lower power, per the burn-in
      * strategy. Never pure white anywhere in this project. */
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x101018), 0);
@@ -112,3 +116,6 @@ void ui_diag_set_status(const char *txt)
 {
     if (s_status) lv_label_set_text(s_status, txt);
 }
+
+void ui_diag_show(void)       { if (s_scr) lv_scr_load(s_scr); }
+lv_obj_t *ui_diag_screen(void) { return s_scr; }

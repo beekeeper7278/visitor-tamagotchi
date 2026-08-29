@@ -1,0 +1,5 @@
+{
+  "_comment": "PNG asset manifest. Empty in Phase 2 - see include/assets.h for why. Each entry: name, source png (relative to assets/src/), and colour format.",
+  "format_default": "LV_IMG_CF_TRUE_COLOR_ALPHA",
+  "assets": []
+}

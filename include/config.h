@@ -8,10 +8,11 @@
  * ======================================================================== */
 
 #include <stdint.h>
+#include "board_pins.h"   /* BSP_LCD_W for the pet home position */
 
 /* --- Build identity ---------------------------------------------------- */
-#define VISITOR_VERSION      "0.1.0-phase1"
-#define VISITOR_PHASE        1
+#define VISITOR_VERSION      "0.2.0-phase2"
+#define VISITOR_PHASE        2
 
 /* --- LVGL display buffer ------------------------------------------------
  * [SPEC] ~60-line single buffer in INTERNAL SRAM. Do not move to PSRAM
@@ -85,6 +86,83 @@
  * ROM bootloader is entered - never reads as a menu toggle. */
 #define BOOT_DEBOUNCE_MS        30              /* [GUESS] */
 #define BOOT_SHORT_PRESS_MAX_MS 800             /* [GUESS] longer = ignored */
+
+/* --- Pet rendering + animation [SPEC section 8] -------------------------
+ * The pet occupies a 160x160 box on the 368x448 screen. Animation runs at
+ * 10 fps on t_anim; that is a design decision, not a limitation - a blink
+ * redraws ~24x24 and LVGL's dirty-rect tracking keeps the flush cost far
+ * below a full frame. */
+#define PET_BOX_PX              160
+#define PET_HOME_X              ((BSP_LCD_W - PET_BOX_PX) / 2)
+#define PET_HOME_Y              150
+#define PET_WALK_MARGIN_PX      16      /* keeps the box fully on screen    */
+
+#define ANIM_BREATHE_PERIOD_MS  2000    /* body_h +/-3 px sine              */
+#define ANIM_BREATHE_AMP_PX     3
+#define ANIM_BLINK_MS           120     /* eye height -> 2 px               */
+#define ANIM_BLINK_MIN_MS       3000    /* random every 3-7 s               */
+#define ANIM_BLINK_MAX_MS       7000
+#define ANIM_WALK_MS            1500    /* x lerp to target                 */
+#define ANIM_WALK_BOB_PX        4
+#define ANIM_REACT_MS           600     /* body jitter +/-6 px              */
+#define ANIM_REACT_JITTER_PX    6
+#define ANIM_HOP_MS             180     /* two hops for the happy anim      */
+#define ANIM_HOP_HEIGHT_PX      14
+#define ANIM_SAD_DROP_PX        6
+
+/* Autonomous idle behaviour [GUESS - tune by watching it]. A pet that only
+ * moves when poked reads as a picture rather than a creature, so idle
+ * wandering and idle chatter are behaviours, not test hooks. */
+/* Idle wander interval. TUNED ON HARDWARE 2026-08-28: 8-20 s read as too
+ * infrequent on the real panel - the pet looked inert between walks - so it
+ * was tightened to 4-9 s. Walk speed and duration are deliberately NOT
+ * changed; only how often a walk is started.
+ *
+ * The interval is measured from the END of the previous walk, not its start:
+ * the walk completion path calls ui_pet_play(PET_ANIM_IDLE), which re-arms
+ * the timer at that instant. That is what stops walks chaining back-to-back
+ * when the interval is short - and at 4 s it is short enough to matter. */
+#define IDLE_WALK_MIN_MS        4000
+#define IDLE_WALK_MAX_MS        9000
+#define IDLE_CHATTER_MS         15000   /* ATTEMPT interval; the bubble
+                                         * cooldowns decide what actually
+                                         * gets through, which is the point */
+
+/* Live modifiers applied over the form at draw time [SPEC section 8].
+ * Weight scales body_w by +/-20%, so the same form reads fed vs starved. */
+#define PET_WEIGHT_SCALE_PCT    20
+
+/* --- Speech bubbles [SPEC section 10] -----------------------------------
+ * Four tiers, one bubble at a time, higher tier preempts. These numbers are
+ * SPEC, not guesses - changing one changes documented behaviour. */
+#define BUBBLE_FADE_MS          150     /* preempt cross-fade               */
+#define BUBBLE_BASE_MS          2500    /* duration = base + per-char       */
+#define BUBBLE_PER_CHAR_MS      40
+#define BUBBLE_MAX_MS           5000
+#define BUBBLE_GLOBAL_CD_MS     8000
+#define BUBBLE_T0_CD_MS         20000   /* critical need                    */
+#define BUBBLE_T1_CD_MS         3000    /* reaction to input                */
+#define BUBBLE_T2_CD_MS         45000   /* mood flavour                     */
+#define BUBBLE_T3_CD_MS         90000   /* idle chatter                     */
+#define BUBBLE_NO_REPEAT_DEPTH  5       /* no string repeat within last 5   */
+
+/* --- Bubble layout ------------------------------------------------------
+ * The box is LV_SIZE_CONTENT in both axes, so it hugs the label: width comes
+ * from the measured text width clamped to [MIN, MAX], and height grows on
+ * its own as lines wrap. TEXT_MAX_W is the wrap width - the label's width,
+ * NOT the box's - so the padding and border below are added on top of it.
+ *
+ * Sizing rationale: 232 px of text at montserrat_20 holds roughly 22-24
+ * characters per line, which keeps normal dialogue to 1-3 lines. The full
+ * box is then 232 + 2*12 pad + 2*2 border = 260 px, comfortably inside the
+ * 368 px panel with room to sit off-centre when the pet is near an edge. */
+#define BUBBLE_PAD_PX           12
+#define BUBBLE_BORDER_PX        2
+#define BUBBLE_TEXT_MAX_W       232     /* wrap width for the label         */
+#define BUBBLE_TEXT_MIN_W       40      /* stops "Hi!" becoming a sliver    */
+#define BUBBLE_BOX_MAX_W        (BUBBLE_TEXT_MAX_W + 2 * (BUBBLE_PAD_PX + BUBBLE_BORDER_PX))
+#define BUBBLE_SCREEN_MARGIN    8       /* hard clamp against every edge    */
+#define BUBBLE_TAIL_GAP_PX      12      /* gap between bubble and pet       */
 
 /* --- Diagnostics --------------------------------------------------------- */
 #define DIAG_FPS_SAMPLE_FRAMES  30

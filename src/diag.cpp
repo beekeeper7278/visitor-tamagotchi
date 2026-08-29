@@ -7,6 +7,12 @@
 #include "config.h"
 #include "bsp.h"
 #include "storage.h"
+#include "forms.h"
+#include "ui_pet.h"
+#include "ui_bubble.h"
+#include "ui_diag.h"
+#include "scr_main.h"
+#include "strings.h"
 #include "diag.h"
 
 #define LINE "-----------------------------------------------------------"
@@ -673,6 +679,141 @@ void diag_summary(void)
 /* ==========================================================================
  * Interactive serial console
  * ======================================================================= */
+
+/* ==========================================================================
+ * PHASE 2 TEST HOOKS
+ *
+ * Every animation, every face style and the whole bubble policy has to be
+ * triggerable on demand - an animation you can only observe by waiting for
+ * it is an animation you cannot actually verify.
+ * ======================================================================= */
+
+static int s_eye_cycle = 0, s_mouth_cycle = 0, s_live_cycle = 0;
+
+static void diag_pet_anim(pet_anim_t a)
+{
+    ui_pet_play(a);
+    Serial.printf("PET anim -> %s\n", ui_pet_anim_name(a));
+}
+
+static void diag_pet_eyes(void)
+{
+    s_eye_cycle = (s_eye_cycle + 1) % EYE_STYLE_COUNT;
+    ui_pet_set_face(s_eye_cycle, -1, -1);
+    Serial.printf("PET eyes -> %s  (%d/%d)\n",
+                  ui_pet_eye_name(s_eye_cycle), s_eye_cycle + 1, EYE_STYLE_COUNT);
+}
+
+static void diag_pet_mouth(void)
+{
+    s_mouth_cycle = (s_mouth_cycle + 1) % MOUTH_STYLE_COUNT;
+    ui_pet_set_face(-1, s_mouth_cycle, -1);
+    Serial.printf("PET mouth -> %s  (%d/%d)\n",
+                  ui_pet_mouth_name(s_mouth_cycle), s_mouth_cycle + 1, MOUTH_STYLE_COUNT);
+}
+
+/* Live modifiers: same form, different state. This is the check that the
+ * renderer is parameterised rather than drawing one fixed picture. */
+static void diag_pet_live(void)
+{
+    static const struct { float w; uint8_t c; const char *name; } L[] = {
+        { 0.5f, 100, "neutral weight, clean" },
+        { 1.0f, 100, "heaviest (+20% width)" },
+        { 0.0f, 100, "lightest (-20% width)" },
+        { 0.5f,  10, "neutral weight, filthy" },
+    };
+    s_live_cycle = (s_live_cycle + 1) % 4;
+    pet_live_t lv = { L[s_live_cycle].w, L[s_live_cycle].c };
+    ui_pet_set_live(&lv);
+    Serial.printf("PET live -> %s\n", L[s_live_cycle].name);
+}
+
+static void diag_bubble_one(void)
+{
+    static int tier = 0;
+    const bubble_tier_t t = (bubble_tier_t)(tier % BUBBLE_TIER_COUNT);
+    tier++;
+    ui_bubble_say(t, strings_random(t));
+}
+
+/* The stress test. NOTE: most of these SHOULD be refused - that is the
+ * feature under test, not a failure. What must hold is that the refusals are
+ * the CORRECT ones, that a higher tier always preempts a lower one, and that
+ * exactly one bubble is ever on screen. */
+static void diag_bubble_spam(void)
+{
+    static const uint8_t seq[20] = { 3,3,3,2,2,1,1,0,0,3,2,1,0,3,3,2,1,0,2,3 };
+    uint32_t a0, s0, a1, s1;
+    ui_bubble_stats(&a0, &s0);
+
+    Serial.println();
+    Serial.println("=== BUBBLE STRESS TEST: 20 requests, mixed tiers ==========");
+    Serial.println("Most SHOULD be suppressed. Watch the screen: exactly one");
+    Serial.println("bubble at a time, no stacking, no flicker.");
+    Serial.println();
+
+    for (int i = 0; i < 20; i++) {
+        const bubble_tier_t t = (bubble_tier_t)seq[i];
+        Serial.printf("  [%2d] ", i + 1);
+        ui_bubble_say(t, strings_random(t));
+    }
+
+    ui_bubble_stats(&a1, &s1);
+    Serial.println();
+    Serial.printf("  accepted %lu, suppressed %lu, of 20 requests\n",
+                  (unsigned long)(a1 - a0), (unsigned long)(s1 - s0));
+    Serial.println("  A low accept count here is CORRECT behaviour.");
+    Serial.println(LINE);
+}
+
+/* Bubble layout test. Runs the four required strings at three pet positions
+ * - hard left, centre, hard right - because the clamping bug only shows when
+ * the pet is near an edge, and a centred test would have passed while the
+ * real failure sat one wander away. */
+static const char *LAYOUT_STRINGS[4] = {
+    "HEY!",
+    "Hi!",
+    "Is it snack time yet?",
+    "WHY AM I UPSIDE DOWN?!"
+};
+
+static void diag_bubble_layout(void)
+{
+    const lv_coord_t LEFT   = PET_WALK_MARGIN_PX;
+    const lv_coord_t CENTRE = PET_HOME_X;
+    const lv_coord_t RIGHT  = BSP_LCD_W - PET_BOX_PX - PET_WALK_MARGIN_PX;
+    const struct { lv_coord_t x; const char *name; } POS[3] = {
+        { LEFT, "pet at LEFT edge" },
+        { CENTRE, "pet CENTRED" },
+        { RIGHT, "pet at RIGHT edge" },
+    };
+
+    Serial.println();
+    Serial.println("=== BUBBLE LAYOUT TEST ====================================");
+    Serial.printf("panel %dx%d, text wrap width %d, max box %d\n",
+                  BSP_LCD_W, BSP_LCD_H, BUBBLE_TEXT_MAX_W, BUBBLE_BOX_MAX_W);
+
+    for (int p = 0; p < 3; p++) {
+        ui_pet_set_x(POS[p].x);
+        Serial.printf("\n  --- %s (x=%d) ---\n", POS[p].name, (int)POS[p].x);
+        for (int i = 0; i < 4; i++) {
+            ui_bubble_test_show(LAYOUT_STRINGS[i]);
+            /* let the panel actually show each one */
+            for (int k = 0; k < 18; k++) { lv_timer_handler(); delay(50); }
+        }
+    }
+    ui_pet_set_x(PET_HOME_X);
+    Serial.println();
+    Serial.println("  Every line above must read IN BOUNDS.");
+    Serial.println(LINE);
+}
+
+static void diag_screen(bool pet)
+{
+    if (pet) { scr_main_show(); Serial.println("screen -> PET (Phase 2)"); }
+    else     { ui_diag_show();  Serial.println("screen -> Phase 1 test card (frozen baseline)"); }
+}
+
 void diag_help(void)
 {
     Serial.println();
@@ -688,6 +829,16 @@ void diag_help(void)
     Serial.println("  s  storage self-test");
     Serial.println("  W  WIPE saved state (capital W; asks for confirmation)");
     Serial.println("  ?  this help");
+    Serial.println("  --- Phase 2: pet, animation, bubbles ---");
+    Serial.println("  1  idle      2  blink     3  walk");
+    Serial.println("  4  react     5  happy     6  sad");
+    Serial.println("  e  cycle eye style        w  cycle mouth style");
+    Serial.println("  k  cycle weight/clean live modifiers");
+    Serial.println("  B  one sample bubble (cycles tiers)");
+    Serial.println("  S  BUBBLE STRESS TEST - 20 requests, most should refuse");
+    Serial.println("  L  BUBBLE LAYOUT TEST - 4 strings x 3 pet positions");
+    Serial.println("  n  clear face overrides (back to the form's own face)");
+    Serial.println("  P  pet screen        D  Phase 1 test card");
     Serial.println(LINE);
 }
 
@@ -733,6 +884,23 @@ void diag_serial_tick(void)
                 wipe_armed = true;
                 Serial.println("WIPE saved state? press y to confirm, anything else cancels");
                 break;
+            case '1': diag_pet_anim(PET_ANIM_IDLE);  break;
+            case '2': ui_pet_force_blink();
+                      Serial.println("PET blink (forced)"); break;
+            case '3': diag_pet_anim(PET_ANIM_WALK);  break;
+            case '4': diag_pet_anim(PET_ANIM_REACT); break;
+            case '5': diag_pet_anim(PET_ANIM_HAPPY); break;
+            case '6': diag_pet_anim(PET_ANIM_SAD);   break;
+            case 'e': diag_pet_eyes();           break;
+            case 'w': diag_pet_mouth();          break;
+            case 'k': diag_pet_live();           break;
+            case 'n': ui_pet_set_face(-1, -1, -1);
+                      Serial.println("PET face -> form default"); break;
+            case 'B': diag_bubble_one();         break;
+            case 'S': diag_bubble_spam();        break;
+            case 'L': diag_bubble_layout();      break;
+            case 'P': diag_screen(true);         break;
+            case 'D': diag_screen(false);        break;
             case '?': diag_help();              break;
             default:  Serial.printf("? unknown '%c' - press ? for help\n", (char)c); break;
         }
