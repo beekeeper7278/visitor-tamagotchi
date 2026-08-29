@@ -20,19 +20,42 @@
 #include "ui_bubble.h"
 #include "scr_main.h"
 #include "strings.h"
+#include "pet.h"
+#include "care.h"
+#include "pages.h"
+#include "menu.h"
+#include "btn.h"
 
 static void imu_timer_cb(lv_timer_t *t)  { (void)t; diag_imu_tick();  }
-static void boot_timer_cb(lv_timer_t *t) { (void)t; diag_boot_tick(); }
+static void boot_timer_cb(lv_timer_t *t) { (void)t; diag_boot_tick(); btn_tick(); }
 static void cons_timer_cb(lv_timer_t *t) { (void)t; diag_serial_tick(); }
 
 /* t_anim - 10 fps. The pet's whole animation state machine and the bubble
  * expiry both run from here. Nothing is created or deleted per frame, so
  * only dirty rectangles are redrawn. */
+/* t_sim - 1 s. Time-driven, not tick-driven: care_tick() computes its own dt
+ * so a starved timer loses no simulated time. */
+static void sim_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    care_tick();
+    scr_main_hud_refresh();
+
+    /* Feed real pet state into the renderer's live modifiers, so weight and
+     * cleanliness actually change how the pet looks rather than only how the
+     * Stats bars read. */
+    pet_live_t lv;
+    lv.weight_norm = pet_weight_norm();
+    lv.cleanliness = (uint8_t)pet_get()->cleanliness;
+    ui_pet_set_live(&lv);
+}
+
 static void anim_timer_cb(lv_timer_t *t)
 {
     (void)t;
     ui_pet_tick();
     ui_bubble_tick();
+    care_anim_tick();
 }
 
 static void heartbeat_cb(lv_timer_t *t)
@@ -70,6 +93,9 @@ void setup()
     /* Both screens are built once. The pet screen is the boot default; the
      * Phase 1 test card stays resident so the hardware regression surface is
      * one keypress away and costs nothing to keep. */
+    pet_init();
+    btn_init(menu_toggle);
+
     ui_diag_create();
     scr_main_create();
     scr_main_show();
@@ -95,11 +121,14 @@ void setup()
     Serial.printf("PET: form %s, animation at %d fps\n",
                   forms_name(ui_pet_get_form()), 1000 / T_ANIM_MS);
     Serial.println("Tap the pet to make it react. Press ? for the command list.");
+    Serial.printf("MENU: BOOT short press or the on-screen Menu handle. "
+                  "Transition = %s\n", menu_transition_name());
 
     lv_timer_create(imu_timer_cb,  1000 / DIAG_IMU_PRINT_HZ, NULL);
     lv_timer_create(boot_timer_cb, 20,    NULL);
     lv_timer_create(cons_timer_cb, 30,    NULL);
     lv_timer_create(anim_timer_cb, T_ANIM_MS, NULL);
+    lv_timer_create(sim_timer_cb,  T_SIM_MS,  NULL);
     lv_timer_create(heartbeat_cb,  10000, NULL);
 }
 

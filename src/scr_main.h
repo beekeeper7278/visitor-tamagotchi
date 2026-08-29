@@ -31,6 +31,8 @@ void      scr_main_create(void);
 void      scr_main_show(void);
 lv_obj_t *scr_main_obj(void);
 lv_obj_t *scr_main_overlay(void);   /* the empty PNG seam */
+lv_obj_t *scr_main_room(void);      /* room_layer - mess sprites live here */
+void      scr_main_hud_refresh(void);
 
 #ifdef __cplusplus
 }

@@ -13,6 +13,10 @@
 #include "ui_diag.h"
 #include "scr_main.h"
 #include "strings.h"
+#include "menu.h"
+#include "pages.h"
+#include "pet.h"
+#include "care.h"
 #include "diag.h"
 
 #define LINE "-----------------------------------------------------------"
@@ -712,20 +716,17 @@ static void diag_pet_mouth(void)
                   ui_pet_mouth_name(s_mouth_cycle), s_mouth_cycle + 1, MOUTH_STYLE_COUNT);
 }
 
-/* Live modifiers: same form, different state. This is the check that the
- * renderer is parameterised rather than drawing one fixed picture. */
+/* Live modifiers now come from real pet state every second, so this sets the
+ * underlying WEIGHT rather than the transient render value - otherwise the
+ * next sim tick would immediately overwrite it. */
 static void diag_pet_live(void)
 {
-    static const struct { float w; uint8_t c; const char *name; } L[] = {
-        { 0.5f, 100, "neutral weight, clean" },
-        { 1.0f, 100, "heaviest (+20% width)" },
-        { 0.0f, 100, "lightest (-20% width)" },
-        { 0.5f,  10, "neutral weight, filthy" },
-    };
+    static const float W[4] = { PET_WEIGHT_START_G, PET_WEIGHT_MAX_G,
+                                PET_WEIGHT_MIN_G,  PET_WEIGHT_START_G };
     s_live_cycle = (s_live_cycle + 1) % 4;
-    pet_live_t lv = { L[s_live_cycle].w, L[s_live_cycle].c };
-    ui_pet_set_live(&lv);
-    Serial.printf("PET live -> %s\n", L[s_live_cycle].name);
+    pet_mutable()->weight_g = W[s_live_cycle];
+    Serial.printf("PET weight -> %.1f g (norm %.2f)\n",
+                  (double)W[s_live_cycle], (double)pet_weight_norm());
 }
 
 static void diag_bubble_one(void)
@@ -808,6 +809,49 @@ static void diag_bubble_layout(void)
     Serial.println(LINE);
 }
 
+static void diag_menu_report(void)
+{
+    const pet_state_t *p = pet_get();
+    Serial.println();
+    Serial.println("=== PAGER / PET STATE =====================================");
+    Serial.printf("  menu       : %s", menu_is_open() ? "OPEN" : "closed");
+    if (menu_is_open()) Serial.printf("  page %u %s", menu_page(), page_name(menu_page()));
+    Serial.println();
+    Serial.printf("  transition : %s\n", menu_transition_name());
+    Serial.printf("  gestures   : metrics %s   tap<=%dms/<=%dpx   swipe>=%dpx & |dx|>%d|dy|\n",
+                  menu_metrics() ? "ON" : "off", TAP_MAX_MS, TAP_MAX_TRAVEL_PX,
+                  SWIPE_MIN_TRAVEL_PX, SWIPE_AXIS_RATIO);
+    Serial.printf("  bubbles    : %s\n", ui_bubble_suppressed() ? "SUPPRESSED" : "active");
+    Serial.printf("  stats      : hun %.0f  hap %.0f  dis %.0f  cln %.0f  eng %.0f\n",
+                  p->hunger, p->happiness, p->discipline, p->cleanliness, p->energy);
+    Serial.printf("  body       : %s day %d, %.1f g, mood %s\n",
+                  pet_stage_name(p->stage), (int)p->days_alive, p->weight_g,
+                  pet_mood_name(pet_mood()));
+    Serial.printf("  bathroom   : %.0f%%  messes %u\n", p->bathroom, care_mess_count());
+    Serial.printf("  pet        : anim %s  x=%d y=%d  %s  bath_phase %u\n",
+                  ui_pet_anim_name(ui_pet_current()), (int)ui_pet_x(), (int)ui_pet_y(),
+                  ui_pet_hidden() ? "HIDDEN" : "visible", ui_pet_bath_phase());
+    Serial.println(LINE);
+}
+
+/* Walk all six pages twice, so the 6->1 and 1->6 wraps are both exercised
+ * and any leak from repeated build/delete shows up in the heap figure. */
+static void diag_page_sweep(void)
+{
+    if (!menu_is_open()) menu_open();
+    Serial.println();
+    Serial.println("=== PAGE SWEEP: 12 steps forward (two full loops) =========");
+    for (int i = 0; i < 12; i++) {
+        menu_step(1);
+        for (int k = 0; k < 10; k++) { lv_timer_handler(); delay(30); }
+    }
+    lv_mem_monitor_t m; lv_mem_monitor(&m);
+    Serial.printf("  after sweep: lvgl used %lu, max %lu, frag %u%%\n",
+                  (unsigned long)(m.total_size - m.free_size),
+                  (unsigned long)m.max_used, m.frag_pct);
+    Serial.println(LINE);
+}
+
 static void diag_screen(bool pet)
 {
     if (pet) { scr_main_show(); Serial.println("screen -> PET (Phase 2)"); }
@@ -833,12 +877,23 @@ void diag_help(void)
     Serial.println("  1  idle      2  blink     3  walk");
     Serial.println("  4  react     5  happy     6  sad");
     Serial.println("  e  cycle eye style        w  cycle mouth style");
-    Serial.println("  k  cycle weight/clean live modifiers");
+    Serial.println("  k  cycle pet weight (min / start / max)");
+    Serial.println("  --- Phase 3B: food, care, bathroom, messes ---");
+    Serial.println("  7  burger    8  fruit     9  cake");
+    Serial.println("  0  Bathroom action        C  Clean action");
+    Serial.println("  T  fast-forward 30 simulated minutes");
+    Serial.println("  R  care state report");
     Serial.println("  B  one sample bubble (cycles tiers)");
     Serial.println("  S  BUBBLE STRESS TEST - 20 requests, most should refuse");
     Serial.println("  L  BUBBLE LAYOUT TEST - 4 strings x 3 pet positions");
     Serial.println("  n  clear face overrides (back to the form's own face)");
     Serial.println("  P  pet screen        D  Phase 1 test card");
+    Serial.println("  --- Phase 3A: menu, pages, gestures ---");
+    Serial.println("  M  toggle menu       [ / ]  previous / next page");
+    Serial.println("  g  toggle gesture measurement");
+    Serial.println("  t  cycle transition SLIDE/FADE/CUT");
+    Serial.println("  v  pager + pet state report");
+    Serial.println("  Z  page sweep (2 full loops, checks wrap + leaks)");
     Serial.println(LINE);
 }
 
@@ -899,6 +954,24 @@ void diag_serial_tick(void)
             case 'B': diag_bubble_one();         break;
             case 'S': diag_bubble_spam();        break;
             case 'L': diag_bubble_layout();      break;
+            case '7': care_feed(FOOD_BURGER);    break;
+            case '8': care_feed(FOOD_FRUIT);     break;
+            case '9': care_feed(FOOD_CAKE);      break;
+            case '0': care_bathroom();           break;
+            case 'C': care_clean();              break;
+            case 'T': care_fast_forward(30);     break;
+            case 'R': care_report();             break;
+            case 'M': menu_toggle();             break;
+            case '[': menu_step(-1);             break;
+            case ']': menu_step(1);              break;
+            case 'g': menu_set_metrics(!menu_metrics());
+                      Serial.printf("gesture metrics %s\n", menu_metrics() ? "ON" : "off");
+                      break;
+            case 't': menu_set_transition((menu_transition() + 1) % 3);
+                      Serial.printf("transition -> %s\n", menu_transition_name());
+                      break;
+            case 'v': diag_menu_report();        break;
+            case 'Z': diag_page_sweep();         break;
             case 'P': diag_screen(true);         break;
             case 'D': diag_screen(false);        break;
             case '?': diag_help();              break;

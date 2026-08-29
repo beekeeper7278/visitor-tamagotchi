@@ -11,8 +11,8 @@
 #include "board_pins.h"   /* BSP_LCD_W for the pet home position */
 
 /* --- Build identity ---------------------------------------------------- */
-#define VISITOR_VERSION      "0.2.0-phase2"
-#define VISITOR_PHASE        2
+#define VISITOR_VERSION      "0.3.0-phase3+4"
+#define VISITOR_PHASE        3
 
 /* --- LVGL display buffer ------------------------------------------------
  * [SPEC] ~60-line single buffer in INTERNAL SRAM. Do not move to PSRAM
@@ -97,6 +97,19 @@
 #define PET_HOME_Y              150
 #define PET_WALK_MARGIN_PX      16      /* keeps the box fully on screen    */
 
+/* 2D roaming area. The pet explores in both axes rather than sliding along a
+ * rail. The bounds are chosen to keep the 160x160 box clear of the HUD strip
+ * at the top and off the floor where messes sit, so wandering can never
+ * collide with UI or hide a mess behind the pet. */
+#define PET_ROAM_X_MIN          PET_WALK_MARGIN_PX
+#define PET_ROAM_X_MAX          (BSP_LCD_W - PET_BOX_PX - PET_WALK_MARGIN_PX)
+#define PET_ROAM_Y_MIN          64      /* below the HUD icons              */
+#define PET_ROAM_Y_MAX          232     /* above the floor / mess strip     */
+
+/* Floor line for room messes - deliberately independent of the pet's
+ * position now that the pet moves vertically. */
+#define ROOM_FLOOR_Y            (BSP_LCD_H - 62)
+
 #define ANIM_BREATHE_PERIOD_MS  2000    /* body_h +/-3 px sine              */
 #define ANIM_BREATHE_AMP_PX     3
 #define ANIM_BLINK_MS           120     /* eye height -> 2 px               */
@@ -163,6 +176,107 @@
 #define BUBBLE_BOX_MAX_W        (BUBBLE_TEXT_MAX_W + 2 * (BUBBLE_PAD_PX + BUBBLE_BORDER_PX))
 #define BUBBLE_SCREEN_MARGIN    8       /* hard clamp against every edge    */
 #define BUBBLE_TAIL_GAP_PX      12      /* gap between bubble and pet       */
+
+/* --- Weight, food, bathroom, messes [MILESTONE 3B] ----------------------
+ * ALL tunable from here by request - nothing below is buried in logic.
+ *
+ * WEIGHT: the renderer scales body_w by +/-20% across weight_norm 0..1, and
+ * it relayouts every frame - so a big jump in weight_g would be instantly and
+ * obviously visible. The 20..120 g span is therefore chosen so that a single
+ * cake (+3 g) moves weight_norm by 0.03, i.e. body width by ~0.6% - about one
+ * pixel. Getting visibly chonky takes many cakes, which is the requirement. */
+#define PET_WEIGHT_MIN_G        20.0f
+#define PET_WEIGHT_MAX_G        120.0f
+#define PET_WEIGHT_START_G      45.0f
+
+/* FOOD. Cake is the only item that cannot be refused, which is what makes it
+ * the route to overfeeding - and it pays badly in hunger, so filling up on
+ * cake is a poor strategy without ever being blocked. */
+#define FOOD_FULL_PCT           90.0f   /* at/above: burger+fruit refused    */
+#define FOOD_PARTIAL_PCT        75.0f   /* at/above: burger half-eaten       */
+
+#define BURGER_HUNGER           28.0f
+#define BURGER_WEIGHT_G         2.5f
+#define FRUIT_HUNGER            16.0f
+#define FRUIT_WEIGHT_G          0.6f
+#define CAKE_HUNGER             8.0f    /* modest, by design                 */
+#define CAKE_WEIGHT_G           3.0f
+#define CAKE_HAPPY              6.0f
+
+#define FOOD_PARTIAL_FRACTION   0.5f    /* how much of a burger gets eaten   */
+#define FOOD_REFUSE_DROP_PCT    100     /* % chance a refused item is dropped */
+
+/* BATHROOM. Need climbs continuously; the holding pose and warnings start at
+ * URGENT, and the accident only lands after a grace period on top of that -
+ * so there is always a visible warning window before anything goes wrong. */
+#define RATE_BATHROOM_PER_HOUR  22.0f
+#define BATHROOM_URGENT_PCT     70.0f   /* holding pose + warning bubbles    */
+#define BATHROOM_GRACE_MS       90000UL /* after urgent, before an accident  */
+#define BATHROOM_WARN_MS        20000UL /* min gap between warning bubbles   */
+#define BATHROOM_MIN_TO_GO_PCT  15.0f   /* below this, the button is a no-op */
+#define BATHROOM_RUNOFF_MS      900     /* run to off-screen                 */
+#define BATHROOM_AWAY_MS        2000    /* "about 2 seconds"                 */
+#define BATHROOM_RETURN_MS      900
+/* Hard upper bound on the whole run-off/away/return sequence. Generous
+ * against the ~3.8 s the phases actually need; it exists only so a missing
+ * pet can never be permanent. */
+#define BATHROOM_TOTAL_MAX_MS   8000
+#define BATHROOM_ACCIDENT_CLEAN 12.0f   /* one-off cleanliness hit           */
+
+/* MESSES. The rule that matters: one forgotten item must NOT wreck
+ * cleanliness. Each mess waits out a grace period, then drains slowly, and
+ * each mess stops draining once it has taken its own capped total. So a mess
+ * left for a week costs the same as one left for an hour past its cap -
+ * annoying and visible, never catastrophic. */
+#define MESS_MAX                4       /* matches the section 9 sprite pool */
+#define MESS_GRACE_MS           60000UL /* nothing happens for a minute      */
+#define MESS_FOOD_DRAIN_PER_H   2.5f
+#define MESS_POOP_DRAIN_PER_H   6.0f    /* accidents cost more than food     */
+#define MESS_FOOD_DRAIN_CAP     15.0f   /* total this mess can ever take     */
+#define MESS_POOP_DRAIN_CAP     30.0f
+
+#define CLEAN_RECOVERY_PCT      18.0f   /* modest, per the requirement       */
+#define CLEAN_EFFECT_MS         700     /* sparkle burst on cleaning         */
+#define PUFF_COUNT              7       /* cleaning puffs                    */
+#define PUFF_MS                 620
+#define CLEAN_STEP_MS           220     /* gap between messes vanishing      */
+#define CLEAN_SEQ_MAX_MS        2000    /* whole sequence stays 1-2 s        */
+#define STINK_AFTER_MS          180000UL/* stink lines once it has sat a while*/
+
+/* Food presentation. The item is shown falling to the Visitor and then
+ * either eaten, half-eaten or refused with a head shake - so the outcome is
+ * something you watch rather than something you read in a bubble. */
+#define FOOD_DROP_MS            700     /* falls from above to the pet       */
+#define FOOD_EAT_MS             1200    /* chewing                           */
+#define FOOD_CHEW_MS            150     /* mouth open/close period [SPEC 8]  */
+#define FOOD_REFUSE_MS          800     /* head shake "no"                   */
+#define FOOD_SHAKES             3       /* how many times the head turns     */
+#define FOOD_SHAKE_PX           7
+
+/* --- Pager / menu [SPEC section 4] --------------------------------------
+ * Only the CURRENT page exists as LVGL objects. On swipe the neighbour is
+ * built at x = +/-368, both animate, the old one is deleted. Index is mod 6,
+ * so the 6->1 wrap is free - no sentinel clones, no scroll-snap fighting. */
+#define PAGE_COUNT              6
+
+/* Transition style. Phase 1 measured 19.7 fps end-to-end, below the ~20 the
+ * design wanted for a full-width slide, so all three are implemented behind
+ * this one setting and compared on the actual panel.
+ *   0 = SLIDE  368 px horizontal, the original design
+ *   1 = FADE   cross-fade, cheaper in frames but still a full redraw
+ *   2 = CUT    instant swap + a page-dot flash; cheapest by far */
+#define PAGE_TR_SLIDE           0
+#define PAGE_TR_FADE            1
+#define PAGE_TR_CUT             2
+#define PAGE_TRANSITION         PAGE_TR_CUT
+
+#define PAGE_SLIDE_MS           250
+#define PAGE_FADE_MS            120
+#define PAGE_CUT_FLASH_MS       180     /* dot flash, so a cut still reads  */
+
+#define DOT_SIZE_PX             8
+#define DOT_GAP_PX              10
+#define DOT_BOTTOM_MARGIN       14
 
 /* --- Diagnostics --------------------------------------------------------- */
 #define DIAG_FPS_SAMPLE_FRAMES  30

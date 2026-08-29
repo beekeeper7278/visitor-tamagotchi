@@ -50,7 +50,14 @@ static uint32_t    s_blink_t0   = 0;   /* 0 = not blinking                  */
 
 static lv_coord_t  s_walk_from = PET_HOME_X, s_walk_to = PET_HOME_X;
 static lv_coord_t  s_pos_x     = PET_HOME_X;
+static lv_coord_t  s_pos_y     = PET_HOME_Y;
+static lv_coord_t  s_walk_from_y = PET_HOME_Y, s_walk_to_y = PET_HOME_Y;
 static uint32_t    s_wander_at  = 0;   /* next autonomous walk */
+static pet_anim_done_cb_t s_done_cb = nullptr;
+/* bathroom sub-phases: 0 running out, 1 away, 2 running back */
+static uint8_t     s_bath_phase = 0;
+static lv_coord_t  s_bath_from  = 0, s_bath_exit = 0;
+static uint32_t    s_bath_started_ms = 0;
 
 /* --- small helpers ------------------------------------------------------ */
 
@@ -315,7 +322,9 @@ static void apply_mouth(int style, lv_coord_t cx, lv_coord_t cy,
 static lv_coord_t s_off_x = 0, s_off_y = 0;
 static int        s_squash = 0;      /* +ve = wider/shorter this frame      */
 static int        s_anim_eye = -1;   /* animation-forced eye style          */
+static int        s_anim_mouth = -1; /* animation-forced mouth style        */
 static bool       s_spark_on = false;
+static float      s_urgency = 0.0f;
 
 /* --- layout -------------------------------------------------------------
  * Recomputed every frame from form + live modifiers + animation offsets.
@@ -326,10 +335,19 @@ static void layout(void)
 {
     const pet_form_t *f = forms_get(s_form_id);
 
+    const bool hold_face = (s_anim == PET_ANIM_HOLDING);
     const int eye   = (s_anim_eye >= 0) ? s_anim_eye
+                    : hold_face ? EYE_SLEEPY          /* tense, half-shut   */
                     : (s_eye_ovr  >= 0) ? s_eye_ovr  : f->eye_style;
-    const int mouth = (s_mouth_ovr >= 0) ? s_mouth_ovr : f->mouth_style;
-    const int brow  = (s_brow_ovr  >= 0) ? s_brow_ovr  : f->brow_style;
+    /* HOLDING used to force MOUTH_WOBBLE, but that style is a two-arc
+     * approximation of a wavy line and it read as a glitch rather than as
+     * discomfort. A small flat grimace is far more natural for "I need to
+     * go" - strained rather than broken. */
+    const int mouth = (s_anim_mouth >= 0) ? s_anim_mouth
+                    : hold_face ? MOUTH_FLAT
+                    : (s_mouth_ovr >= 0) ? s_mouth_ovr : f->mouth_style;
+    const int brow  = hold_face ? BROW_WORRIED
+                    : (s_brow_ovr  >= 0) ? s_brow_ovr  : f->brow_style;
 
     /* silhouette: squash parameter trades width against height */
     float w = f->body_w * (1.0f + f->body_squash / 200.0f);
@@ -343,6 +361,12 @@ static void layout(void)
     h += ANIM_BREATHE_AMP_PX * sinf(phase(bp));
 
     if (s_anim == PET_ANIM_SAD) h -= ANIM_SAD_DROP_PX;
+
+    /* HOLDING: narrower and a little taller - a body drawn in on itself. */
+    if (s_anim == PET_ANIM_HOLDING) {
+        w -= (lv_coord_t)(8 + 6 * s_urgency);      /* squeeze in */
+        h += (lv_coord_t)(5 + 4 * s_urgency);
+    }
 
     /* walk squash */
     w += s_squash;
@@ -366,9 +390,24 @@ static void layout(void)
     lv_obj_set_style_radius(o_belly, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(o_belly, lv_color_hex(f->c_belly), 0);
 
+    const lv_coord_t fcx0 = bx + bw / 2;
+
     /* limbs */
     const bool nubs = (f->limb_style == LIMB_NUBS);
-    if (nubs) {
+    const bool holding = (s_anim == PET_ANIM_HOLDING);
+    if (nubs && holding) {
+        /* hands down in front, held together low and centre - the readable
+         * part of a "needs the bathroom" pose */
+        const lv_coord_t nw = 15, nh = 12;
+        lv_obj_set_size(o_nub_l, nw, nh);
+        lv_obj_set_size(o_nub_r, nw, nh);
+        lv_obj_set_style_radius(o_nub_l, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_radius(o_nub_r, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(o_nub_l, lv_color_hex(f->c_body), 0);
+        lv_obj_set_style_bg_color(o_nub_r, lv_color_hex(f->c_body), 0);
+        lv_obj_set_pos(o_nub_l, fcx0 - nw - 1, by + bh - nh - 8);
+        lv_obj_set_pos(o_nub_r, fcx0 + 1,      by + bh - nh - 8);
+    } else if (nubs) {
         const lv_coord_t nw = 16, nh = 13;
         lv_obj_set_size(o_nub_l, nw, nh);
         lv_obj_set_size(o_nub_r, nw, nh);
@@ -443,7 +482,7 @@ static void layout(void)
     for (int i = 0; i < 3; i++) show(o_spark[i], s_spark_on);
 
     /* finally place the whole box */
-    lv_obj_set_pos(o_root, s_pos_x + s_off_x, PET_HOME_Y);
+    lv_obj_set_pos(o_root, s_pos_x + s_off_x, s_pos_y);
 }
 
 /* --- animation driver (t_anim, 10 fps) ---------------------------------- */
@@ -451,30 +490,64 @@ static void layout(void)
 void ui_pet_play(pet_anim_t a)
 {
     if (a >= PET_ANIM_COUNT) return;
+
+    /* ROOT-CAUSE FIX. The bathroom sequence is the only animation that hides
+     * the pet and parks it off-screen, and it used to be the only code that
+     * could undo that. So ANY other trigger arriving mid-sequence - feeding,
+     * cleaning, a tap, a diagnostic - replaced the state machine and left the
+     * pet permanently invisible off the edge of the panel, with no way back.
+     *
+     * Leaving the bathroom state must therefore always restore visibility and
+     * a valid on-screen position, no matter who interrupted it or why. */
+    if (s_anim == PET_ANIM_BATHROOM && a != PET_ANIM_BATHROOM) {
+        lv_obj_clear_flag(o_root, LV_OBJ_FLAG_HIDDEN);
+        if (s_pos_x < PET_ROAM_X_MIN || s_pos_x > PET_ROAM_X_MAX) s_pos_x = PET_HOME_X;
+        if (s_pos_y < PET_ROAM_Y_MIN || s_pos_y > PET_ROAM_Y_MAX) s_pos_y = PET_HOME_Y;
+        s_bath_phase = 0;
+    }
+
     s_anim = a;
     s_anim_t0 = millis();
 
     if (a == PET_ANIM_IDLE) {
         s_wander_at = millis() + (uint32_t)random(IDLE_WALK_MIN_MS, IDLE_WALK_MAX_MS);
     }
+    if (a == PET_ANIM_BATHROOM) {
+        s_bath_started_ms = millis();
+        s_bath_phase = 0;
+        s_bath_from  = s_pos_x;
+        /* leave by the nearer edge - running the full width first would read
+         * as a detour rather than urgency */
+        s_bath_exit  = (s_pos_x + PET_BOX_PX / 2 < BSP_LCD_W / 2)
+                     ? (lv_coord_t)(-PET_BOX_PX - 4)
+                     : (lv_coord_t)(BSP_LCD_W + 4);
+        lv_obj_clear_flag(o_root, LV_OBJ_FLAG_HIDDEN);
+    }
     if (a == PET_ANIM_WALK) {
-        const lv_coord_t lo = PET_WALK_MARGIN_PX;
-        const lv_coord_t hi = BSP_LCD_W - PET_BOX_PX - PET_WALK_MARGIN_PX;
-        s_walk_from = s_pos_x;
-        s_walk_to   = (lv_coord_t)random(lo, hi + 1);
+        /* Pick a destination anywhere in the roaming rectangle, so the pet
+         * explores the screen instead of pacing a single line. */
+        s_walk_from   = s_pos_x;
+        s_walk_from_y = s_pos_y;
+        s_walk_to     = (lv_coord_t)random(PET_ROAM_X_MIN, PET_ROAM_X_MAX + 1);
+        s_walk_to_y   = (lv_coord_t)random(PET_ROAM_Y_MIN, PET_ROAM_Y_MAX + 1);
     }
 }
 
 pet_anim_t ui_pet_current(void) { return s_anim; }
 
 void ui_pet_force_blink(void) { s_blink_t0 = millis(); }
+void ui_pet_set_done_cb(pet_anim_done_cb_t cb) { s_done_cb = cb; }
+void ui_pet_set_urgency(float u) { s_urgency = u < 0 ? 0 : (u > 1 ? 1 : u); }
+
+bool       ui_pet_hidden(void)     { return o_root && lv_obj_has_flag(o_root, LV_OBJ_FLAG_HIDDEN); }
+lv_coord_t ui_pet_x(void)          { return s_pos_x; }
+lv_coord_t ui_pet_y(void)          { return s_pos_y; }
+uint8_t    ui_pet_bath_phase(void) { return s_bath_phase; }
 
 void ui_pet_set_x(lv_coord_t x)
 {
-    const lv_coord_t lo = PET_WALK_MARGIN_PX;
-    const lv_coord_t hi = BSP_LCD_W - PET_BOX_PX - PET_WALK_MARGIN_PX;
-    if (x < lo) x = lo;
-    if (x > hi) x = hi;
+    if (x < PET_ROAM_X_MIN) x = PET_ROAM_X_MIN;
+    if (x > PET_ROAM_X_MAX) x = PET_ROAM_X_MAX;
     s_pos_x = s_walk_from = s_walk_to = x;
     ui_pet_play(PET_ANIM_IDLE);
 }
@@ -496,16 +569,21 @@ void ui_pet_tick(void)
     }
 
     s_off_x = 0; s_off_y = 0; s_squash = 0;
-    s_anim_eye = -1; s_spark_on = false;
+    s_anim_eye = -1; s_anim_mouth = -1; s_spark_on = false;
 
     switch (s_anim) {
     case PET_ANIM_WALK: {
         float t = (float)el / (float)ANIM_WALK_MS;
         if (t >= 1.0f) {
             s_pos_x = s_walk_to;
+            s_pos_y = s_walk_to_y;
             ui_pet_play(PET_ANIM_IDLE);
         } else {
-            s_pos_x = s_walk_from + (lv_coord_t)((s_walk_to - s_walk_from) * t);
+            /* Ease the vertical component so diagonal moves read as an
+             * amble rather than a straight-line slide. */
+            const float te = t * t * (3.0f - 2.0f * t);
+            s_pos_x = s_walk_from   + (lv_coord_t)((s_walk_to   - s_walk_from)   * t);
+            s_pos_y = s_walk_from_y + (lv_coord_t)((s_walk_to_y - s_walk_from_y) * te);
             /* two-phase squash + bob, so it reads as steps not a slide */
             const float ph = t * 6.2831853f * 2.0f;
             s_off_y  = -(lv_coord_t)(ANIM_WALK_BOB_PX * fabsf(sinf(ph)));
@@ -533,6 +611,95 @@ void ui_pet_tick(void)
         }
         break;
     }
+    case PET_ANIM_HOLDING: {
+        /* Restless fidget that tightens with urgency: a slow shift early on,
+         * a visible squeeze-and-wiggle when it is nearly too late. Stillness
+         * would not read as needing anything. */
+        const uint32_t period = (uint32_t)(700 - 300 * s_urgency);
+        const float f = sinf(phase(period));
+        const float amp = 2.0f + 3.5f * s_urgency;
+        s_off_x = (lv_coord_t)(amp * f);
+        s_off_y = (lv_coord_t)((1.5f + 2.0f * s_urgency) * fabsf(f));
+        break;
+    }
+
+    case PET_ANIM_CLEANING: {
+        /* busy little scoot - the Visitor helping tidy up */
+        const float t = (float)el / 1200.0f;
+        s_off_x  = (lv_coord_t)(5.0f * sinf(t * 6.2831853f * 3.0f));
+        s_squash = (int)(3.0f * sinf(t * 6.2831853f * 6.0f));
+        s_anim_mouth = MOUTH_SMILE;
+        if (el >= 1200) ui_pet_play(PET_ANIM_HAPPY);
+        break;
+    }
+
+    case PET_ANIM_BATHROOM: {
+        /* SAFETY NET. The pet is hidden and off-screen during this sequence,
+         * so any way of getting stuck here means a permanently missing pet -
+         * the worst failure this renderer can have. Bound the whole thing in
+         * wall-clock terms and recover unconditionally, whatever the cause. */
+        if (now - s_bath_started_ms > BATHROOM_TOTAL_MAX_MS) {
+            Serial.printf("PET bathroom watchdog fired in phase %u - recovering\n",
+                          s_bath_phase);
+            s_pos_x = PET_HOME_X;
+            s_pos_y = PET_HOME_Y;
+            lv_obj_clear_flag(o_root, LV_OBJ_FLAG_HIDDEN);
+            ui_pet_play(PET_ANIM_IDLE);
+            if (s_done_cb) s_done_cb(PET_ANIM_BATHROOM);
+            break;
+        }
+        if (s_bath_phase == 0) {
+            float t = (float)el / (float)BATHROOM_RUNOFF_MS;
+            if (t >= 1.0f) {
+                s_pos_x = s_bath_exit;
+                lv_obj_add_flag(o_root, LV_OBJ_FLAG_HIDDEN);
+                s_bath_phase = 1;
+                s_anim_t0 = now;
+            } else {
+                s_pos_x = s_bath_from + (lv_coord_t)((s_bath_exit - s_bath_from) * t);
+                /* faster bob than a walk: it is running, not strolling */
+                s_off_y = -(lv_coord_t)(6.0f * fabsf(sinf(t * 6.2831853f * 4.0f)));
+            }
+        } else if (s_bath_phase == 1) {
+            if (el >= BATHROOM_AWAY_MS) {
+                s_bath_phase = 2;
+                s_anim_t0 = now;
+                lv_obj_clear_flag(o_root, LV_OBJ_FLAG_HIDDEN);
+            }
+        } else {
+            float t = (float)el / (float)BATHROOM_RETURN_MS;
+            if (t >= 1.0f) {
+                s_pos_x = PET_HOME_X;
+                ui_pet_play(PET_ANIM_IDLE);
+                if (s_done_cb) s_done_cb(PET_ANIM_BATHROOM);
+            } else {
+                s_pos_x = s_bath_exit + (lv_coord_t)((PET_HOME_X - s_bath_exit) * t);
+                s_off_y = -(lv_coord_t)(6.0f * fabsf(sinf(t * 6.2831853f * 4.0f)));
+            }
+        }
+        break;
+    }
+
+    case PET_ANIM_EATING: {
+        /* mouth alternates open/closed at FOOD_CHEW_MS [SPEC section 8] */
+        const bool open = ((el / FOOD_CHEW_MS) % 2) == 0;
+        s_anim_mouth = open ? MOUTH_OPEN_HAPPY : MOUTH_FLAT;
+        s_off_y = (lv_coord_t)(1.5f * sinf(phase(FOOD_CHEW_MS * 2)));
+        if (el >= FOOD_EAT_MS) ui_pet_play(PET_ANIM_IDLE);
+        break;
+    }
+
+    case PET_ANIM_REFUSE: {
+        /* head shake. The Baby's head is merged with its body, so turning
+         * the whole body left-right IS the head shake at this form. */
+        const float t = (float)el / (float)FOOD_REFUSE_MS;
+        s_off_x = (lv_coord_t)(FOOD_SHAKE_PX *
+                               sinf(t * 6.2831853f * (float)FOOD_SHAKES));
+        s_anim_mouth = MOUTH_FLAT;
+        if (el >= FOOD_REFUSE_MS) ui_pet_play(PET_ANIM_IDLE);
+        break;
+    }
+
     case PET_ANIM_IDLE:
         /* wander off on its own schedule */
         if (s_wander_at && (int32_t)(now - s_wander_at) >= 0) {
@@ -568,7 +735,7 @@ void ui_pet_get_live(pet_live_t *out)        { if (out)  *out = s_live;  }
 void ui_pet_anchor(lv_coord_t *x, lv_coord_t *top_y)
 {
     if (x)     *x     = s_pos_x + PET_BOX_PX / 2;
-    if (top_y) *top_y = PET_HOME_Y + 10;
+    if (top_y) *top_y = s_pos_y + 10;
 }
 
 const char *ui_pet_anim_name(pet_anim_t a)
@@ -579,6 +746,11 @@ const char *ui_pet_anim_name(pet_anim_t a)
         case PET_ANIM_REACT: return "react";
         case PET_ANIM_HAPPY: return "happy";
         case PET_ANIM_SAD:   return "sad";
+        case PET_ANIM_HOLDING:  return "holding";
+        case PET_ANIM_BATHROOM: return "bathroom";
+        case PET_ANIM_EATING:   return "eating";
+        case PET_ANIM_REFUSE:   return "refuse";
+        case PET_ANIM_CLEANING: return "cleaning";
         default:             return "?";
     }
 }

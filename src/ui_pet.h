@@ -26,6 +26,11 @@ typedef enum {
     PET_ANIM_REACT,      /* body jitter, angry eyes                        */
     PET_ANIM_HAPPY,      /* two hops + sparkle                             */
     PET_ANIM_SAD,        /* lower body, eyes down, half-speed breathe      */
+    PET_ANIM_HOLDING,    /* needs the bathroom: hands down in front, fidget */
+    PET_ANIM_BATHROOM,   /* runs off-screen, ~2 s away, returns relieved    */
+    PET_ANIM_EATING,     /* mouth open/close while food is consumed         */
+    PET_ANIM_REFUSE,     /* head shake "no" - won't eat / can't finish      */
+    PET_ANIM_CLEANING,   /* joins in: a busy little side-to-side scoot      */
     PET_ANIM_COUNT
 } pet_anim_t;
 
@@ -69,12 +74,28 @@ void ui_pet_tick(void);
  * exercised at the extremes rather than waiting for a wander to get there. */
 void ui_pet_set_x(lv_coord_t x);
 
+/* Called when a ONE-SHOT animation finishes and the pet returns to idle.
+ * The bathroom relief bubble needs to fire on return, not on departure, and
+ * polling for that from care.cpp would duplicate the state machine. */
+typedef void (*pet_anim_done_cb_t)(pet_anim_t finished);
+void ui_pet_set_done_cb(pet_anim_done_cb_t cb);
+
+/* 0..1 urgency, drives how hard the holding pose squeezes and wiggles. */
+void ui_pet_set_urgency(float u);
+
 /* Centre of the pet in screen coords - the bubble anchors to this. */
 void ui_pet_anchor(lv_coord_t *x, lv_coord_t *top_y);
 
 /* The pet's own root, so a tap on the pet can be distinguished from a tap
  * on the background. */
 lv_obj_t *ui_pet_root(void);
+
+/* Diagnostics: the bathroom sequence hides and moves the pet off-screen, so
+ * these exist to answer "where did it go" without guessing. */
+bool        ui_pet_hidden(void);
+lv_coord_t  ui_pet_x(void);
+lv_coord_t  ui_pet_y(void);
+uint8_t     ui_pet_bath_phase(void);
 
 const char *ui_pet_eye_name(int style);
 const char *ui_pet_mouth_name(int style);
