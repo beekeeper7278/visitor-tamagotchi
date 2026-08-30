@@ -6,8 +6,11 @@ Rewritten 2026-08-30 at the end of Phase 9.5.
 
 ## 0. Status
 
-**Phase 9.5 (personality, dreams, identity, refinement) is COMPLETE, accepted
-on hardware, committed and tagged `phase9.5-polish-baseline`.**
+**Phase 9.5 (personality, dreams, identity, refinement) is COMPLETE and
+ACCEPTED on hardware.** The tag `phase9.5-polish-baseline` covers it together
+with the Tilt Maze regression fix that followed acceptance (see §2c).
+
+**Phase 10 has NOT been started.**
 
 | Phase | State |
 |---|---|
@@ -156,6 +159,63 @@ Other rules that are easy to break by accident:
 - `diag_storage_report()` must stay non-destructive. It used to write test
   values into the one real save slot on every boot, destroying the pet. It
   now snapshots and restores. Do not undo that.
+
+## 2c. Tilt Maze regression fix (after Phase 9.5 acceptance)
+
+**Wall sticking.** The collision test moved a whole frame's distance in one
+go, sampled ONE line of the Visitor's box per axis, and snapped back to the
+previous position when that failed. Three compounding faults: it tested
+`nx + MZ_BALL`, the pixel PAST the right edge, so the Visitor was blocked
+with a pixel of clearance still left; it sampled only the centre line, so
+corners were invisible and a corner could slip into a wall unnoticed; and
+once even slightly embedded it asked only "is the new position blocked?",
+never "is this an improvement?", so every candidate move was refused and the
+player was stuck for good.
+
+The fix keeps the axis separation, which was right and is what lets a blocked
+X still slide along Y. `mz_blocked()` is a real box test over every cell the
+Visitor overlaps, with inclusive edges. Movement is sub-stepped a pixel at a
+time and stops at the last free position, so a fast tilt cannot tunnel or
+embed and the Visitor rests flush against the wall. A frame that somehow
+begins overlapping moves freely once, so nothing can be trapped permanently.
+
+Measured with the on-device sweep (`` ` ``), which drives the SHIPPED
+collision code at full speed into every wall and corner of all sixteen mazes:
+
+    old code : 8528 launches, 1615 embedded, 1172 TRAPPED   -> FAIL
+    fixed    : 8528 launches,    0 embedded,    0 trapped   -> PASS
+
+Roughly one hard push into a wall in seven used to leave the player stuck.
+The sweep was checked against the old code before being trusted.
+
+**Baby maze simplified.** Baby was structurally a Kid maze - the same Prim's
+skeleton with the hazards removed: 6-9 dead ends, every corridor one cell
+wide. It is now a wide, branchless path. Kid's 12-16 dead ends were also not
+"a few", and Teen was Kid plus holes with an identical skeleton, so the whole
+ladder was re-authored. Every figure is measured by the offline validator and
+asserted before the templates are pasted in:
+
+    tier    route   dead ends   holes   corridors
+    Baby    26-30       0         0     ALL two cells wide
+    Kid       30        5         0     one cell
+    Teen      30       10         6     one cell
+    Adult     34      11-15      11     one cell
+
+Kid and Teen were thinned by removing whole dead-end BRANCHES - never a cell
+on the solution route, never a branch containing a hazard - so route lengths
+and hole counts are untouched. Adult is unchanged and remains the hardest.
+Within a tier every variant shares its route length and (Kid, Teen) its exact
+dead-end count, so repeated plays change the SHAPE and nothing else;
+difficulty does not drift in either direction.
+
+**No BSP or IMU changes.** `board_pins.h` and `bsp.*` are untouched, and the
+display-frame adapter in `mz_step()` (`tilt_right = gy`, `tilt_down = -gx`)
+is byte-identical.
+
+New console keys: `` ` `` collision sweep, `\` press the open game's Start,
+`'` place the Visitor on the maze exit so the real win path runs. The last
+two exist because `games_launch()` only opens the intro screen, so without
+them no game round could be reached from the console at all.
 
 ## 3. Save schema
 
@@ -457,6 +517,8 @@ seconds. Use `~/.platformio/penv/bin/python` (it has pyserial).
     (  deferred-reaction test          )  old-mess trigger probe
     }  learned-behaviour recovery demo
     :  START the egg (90 s)   |  cycle colour   -  cycle gender
+    `  maze collision sweep (all 16 mazes)
+    \  press the open game's Start    '  place the Visitor on the maze exit
     X  reset Visitor     Y  persistence fidelity  y  suspend simulation
     m  LVGL heap         v  pager/pet state       s  storage self-test
     M  menu toggle       P/D  pet screen / Phase 1 test card

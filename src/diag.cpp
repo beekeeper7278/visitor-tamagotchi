@@ -1269,6 +1269,7 @@ void diag_help(void)
     Serial.println("  ~  FORCE a dream (bypasses the rules)   ^  dream ELIGIBILITY rules");
     Serial.println("  (  deferred-reaction test        )  old-mess comment samples");
     Serial.println("  }  learned-behaviour recovery demo");
+    Serial.println("  `  maze collision sweep (all 16 mazes)   \\  press Start   '  finish the maze");
     Serial.println("  B  one sample bubble (cycles tiers)");
     Serial.println("  S  BUBBLE STRESS TEST - 20 requests, most should refuse");
     Serial.println("  L  BUBBLE LAYOUT TEST - 4 strings x 3 pet positions");
@@ -1622,6 +1623,9 @@ void diag_serial_tick(void)
                 Serial.println("-----------------------------------------------------------");
                 break;
             }
+            case '`':  games_maze_collision_sweep(); break;
+            case '\\': games_press_start();           break;
+            case '\'': games_maze_warp_to_exit();    break;
             case 'U': dialogue_report();         break;
             case 'I': diag_identity_report();    break;
             case '~': {

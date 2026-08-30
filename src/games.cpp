@@ -242,6 +242,17 @@ static void start_play(void)
     }
 }
 
+/* The console standing in for the player's finger on Start, through the SAME
+ * entry point the button uses. Without it there is no way to reach a round
+ * from the console at all - games_launch() only opens the intro screen - so
+ * the maze could not be exercised headlessly. Exactly the reason the egg's
+ * ':' command was rewired to call the real START path. */
+void games_press_start(void)
+{
+    if (!s_active) { Serial.println("no game open - launch one first"); return; }
+    start_play();
+}
+
 /* Happiness, the multiplier, and the record write all happen here so no
  * individual game can forget one of them. */
 static float s_happy_awarded;
@@ -877,17 +888,43 @@ static void memory_start(void)
  * harder thing to get right and a much worse thing to get wrong in a child's
  * hands. Here solvability is a property of the data, checked once.
  *
- * These replaced an earlier serpentine set that played far too open: a
- * serpentine is one route, but its rows are wide corridors, so it reads as a
- * room rather than a maze. Prim's gives a PERFECT maze - exactly one route
- * between any two cells - with many short branches off it, which is what
- * produces the "twisty single path with lots of dead ends" this wants.
- * Measured: 9-11 dead ends per template against a 19-23 cell route.
+ * Prim's gives a PERFECT maze - exactly one route between any two cells -
+ * with many short branches off it, which is what produces the "twisty single
+ * path with lots of dead ends" the older tiers want.
+ *
+ * THE DIFFICULTY LADDER, re-authored because Baby was structurally a Kid
+ * maze - same Prim's skeleton with the holes removed, 6-9 dead ends, every
+ * corridor one cell wide. A five-year-old's first game should not be a
+ * puzzle. Every figure below is measured by the offline validator, not
+ * estimated, and asserted before the templates are pasted in:
+ *
+ *     tier    route   dead ends   holes   corridors
+ *     Baby    26-30       0         0     ALL two cells wide
+ *     Kid       30        5         0     one cell
+ *     Teen      30       10         6     one cell
+ *     Adult     34      11-15      11     one cell
+ *
+ * Baby is a wide, branchless path - a serpentine, an L, twin columns, a
+ * single-turn spiral. A serpentine "reads as a room rather than a maze",
+ * which was a fault at Kid and up and is exactly the point here: there is
+ * one obvious way to go and 56 px of corridor to do it in, against a 20 px
+ * Visitor. All four Baby variants are branchless and two-wide, so they are
+ * equally easy; their routes are held to a 26-30 band so none is a slog.
+ *
+ * Kid and Teen were thinned by removing whole dead-end BRANCHES from the
+ * Prim's skeletons - never a cell on the solution route, and never a branch
+ * containing a hazard, so route length and hole count are untouched. Kid had
+ * 12-16 dead ends, which is not "a few". Teen keeps twice Kid's branching
+ * plus hazards; Adult is unchanged and remains the hardest.
+ *
+ * Within a tier every variant shares its route length and (for Kid and Teen)
+ * its exact dead-end count, so a repeat play changes the SHAPE and nothing
+ * else. Difficulty never drifts with repeated plays.
  *
  * Hazards sit only in dead-end branches, never on the route. In a
- * one-cell-wide passage with a 24 px Visitor and 32 px cells there is no room
+ * one-cell-wide passage with a 20 px Visitor and 28 px cells there is no room
  * to steer around a hole - on the route it would be an unavoidable reset
- * rather than a risk worth taking.
+ * rather than a risk worth taking. Baby and Kid have none at all.
  *
  * Movement runs on its own ~30 fps timer and moves ONE small object, so the
  * dirty rectangle is the ball, not the screen. The 40 MHz display bus is not
@@ -913,22 +950,22 @@ static void memory_start(void)
 
 static const char *MZ_TPL[4][MZ_VARIANTS][MZ_H] = {
     {   /* BABY */
-        { "#############", "#S..........#", "#.#.#.###.#.#", "#.#.#.......#", "###.#######.#", "#...#.#.#...#", "#.###.#.#.###", "#...#...#.#.#", "###.#.#.###.#", "#.....#.....#", "#.#.#######.#", "#.#.........#", "#.#.#.#.#####", "#...#......E#", "#############" },
-        { "#############", "#S......#.#.#", "#.###.#.#.#.#", "#.#...#.....#", "###.#####.###", "#.......#...#", "#.###.#.###.#", "#...#.#...#.#", "#.###.#.###.#", "#.#.........#", "###.#.#.###.#", "#.....#...#.#", "#.#.###.#####", "#..........E#", "#############" },
-        { "#############", "#S#.........#", "#.#.#######.#", "#.....#.....#", "#.#.#.#.#.###", "#.#.#...#...#", "#.#.#.#######", "#...#.......#", "#.#.#.#.###.#", "#...#.#.#...#", "#.###.#.###.#", "#.#.....#...#", "###.#.###.###", "#.......#..E#", "#############" },
-        { "#############", "#S......#.#.#", "#.###.###.#.#", "#...........#", "#.###.#.###.#", "#...#.#.....#", "#.###.#.#####", "#.#...#.....#", "#.#.###.###.#", "#.....#.#...#", "#.###.###.#.#", "#...#.#.....#", "#.#.#.###.###", "#...#.#....E#", "#############" },
+        { "#############", "#S..........#", "#...........#", "##########..#", "##########..#", "##########..#", "#...........#", "#...........#", "#..##########", "#..##########", "#..##########", "#..##########", "#..##########", "#E.##########", "#############" },
+        { "#############", "#S..#####.E.#", "#...#####...#", "#...#####...#", "#...#####...#", "#...#####...#", "#...#####...#", "#...#####...#", "#...#####...#", "#...#####...#", "#...........#", "#...........#", "#...........#", "#...........#", "#############" },
+        { "#############", "#S.##E.######", "#..##..######", "#..##..######", "#..##..######", "#..##..######", "#..##..######", "#..##..######", "#..##..######", "#..##..######", "#..##..######", "#..##..######", "#......######", "#......######", "#############" },
+        { "#############", "#S..........#", "#...........#", "##########..#", "##########..#", "##########..#", "##########..#", "##########..#", "##########..#", "##########..#", "##########..#", "##########..#", "###E........#", "###.........#", "#############" },
     },
     {   /* KID */
-        { "#############", "#S..........#", "#.###.###.#.#", "#...#...#.#.#", "#.#####.#.#.#", "#...#...#.#.#", "#.###.#####.#", "#...#.#.....#", "#.###.###.#.#", "#.#...#...#.#", "#.#####.#####", "#.#.#.......#", "###.###.###.#", "#.........#E#", "#############" },
-        { "#############", "#S..........#", "###.###.###.#", "#...#...#.#.#", "#####.#.#.###", "#.....#.#...#", "#.#.#.###.#.#", "#.#.#.....#.#", "#.#####.###.#", "#.#.....#.#.#", "###.#.#.#.#.#", "#...#.#...#.#", "#.#.#.#######", "#.#.#......E#", "#############" },
-        { "#############", "#S........#.#", "#.#.#######.#", "#.#.....#...#", "#.#####.#.#.#", "#.#.......#.#", "###.#####.#.#", "#.....#.#.#.#", "###.###.###.#", "#.........#.#", "#####.#.#####", "#.....#...#.#", "#####.#.###.#", "#.....#....E#", "#############" },
-        { "#############", "#S..#.#.#...#", "###.#.#.#.###", "#.....#.....#", "###.#.#.#.###", "#...#...#...#", "###.#.#.###.#", "#...#.#.#...#", "#.#.#.#.#.#.#", "#.#.#.#.#.#.#", "#.###.###.###", "#.#.....#...#", "#.#.#.###.#.#", "#.#.#...#.#E#", "#############" },
+        { "#############", "#S..........#", "#####.#####.#", "#####...###.#", "#######.###.#", "#####...###.#", "#####.#####.#", "#####.#.....#", "#####.###.#.#", "###...#...#.#", "#######.#####", "#######.....#", "###########.#", "###########E#", "#############" },
+        { "#############", "#S..........#", "###.###.###.#", "#...#...###.#", "#####.#######", "#####.#######", "#####.#######", "#####...#####", "#######.#####", "###.....#####", "###.#.#######", "###.#.#######", "###.#.#######", "###.#......E#", "#############" },
+        { "#############", "#S..#########", "###.#########", "###.....#####", "#######.#####", "###.......###", "###.#####.###", "###.###.#.###", "###.###.#####", "###.......###", "#######.#####", "#######.#####", "#######.#####", "#######....E#", "#############" },
+        { "#############", "#S..#########", "###.#########", "###...#.....#", "###.#.#.#.###", "#...#...#...#", "###########.#", "#########...#", "#########.#.#", "#########.#.#", "#########.###", "#########...#", "###########.#", "###########E#", "#############" },
     },
     {   /* TEEN */
-        { "#############", "#S..........#", "#.###.###.#.#", "#...#...#.#.#", "#.#####.#.#.#", "#...#.O.#.#.#", "#O###.#####.#", "#...#.#.....#", "#.###.###.#O#", "#O#...#...#.#", "#.#####.#####", "#.#O#.......#", "###.###.###.#", "#........O#E#", "#############" },
-        { "#############", "#S......OO..#", "###.###.###.#", "#...#...#.#.#", "#####.#.#.###", "#...O.#.#...#", "#.#.#.###O#.#", "#.#.#.....#.#", "#.#####.###.#", "#.#O....#.#.#", "###.#.#.#.#.#", "#..O#.#...#.#", "#.#.#.#######", "#.#.#......E#", "#############" },
-        { "#############", "#S........#.#", "#.#.#######.#", "#.#.....#...#", "#.#####.#.#.#", "#.#......O#.#", "###.#####.#O#", "#.....#.#.#O#", "###.###.###.#", "#.........#.#", "#####.#.#####", "#O....#...#.#", "#####.#.###.#", "#O..O.#....E#", "#############" },
-        { "#############", "#S..#.#.#...#", "###.#.#O#.###", "#.....#.....#", "###.#.#.#.###", "#.O.#...#...#", "###.#.#.###.#", "#OO.#.#.#...#", "#.#.#.#.#.#.#", "#O#.#.#.#.#.#", "#.###.###.###", "#.#.....#...#", "#.#.#O###.#.#", "#.#.#...#.#E#", "#############" },
+        { "#############", "#S..........#", "#.###.###.#.#", "#.###...#.#.#", "#.#####.#.#.#", "#.###.O.#.#.#", "#O###.#####.#", "#...#.#.....#", "#.###.###.#O#", "#O#...#...#.#", "#.#####.#####", "#.#O#.......#", "###.###.###.#", "###......O#E#", "#############" },
+        { "#############", "#S......OO..#", "#######.###.#", "#####...#.#.#", "#####.#.#.###", "#...O.#.#...#", "#.#.#.###O#.#", "#.#.#.....#.#", "#.#####.###.#", "#.#O....#.#.#", "###.#.#.#.#.#", "###O#.#...#.#", "###.#.#######", "###.#......E#", "#############" },
+        { "#############", "#S..#########", "###.#########", "###.....#...#", "#######.#.#.#", "###......O#.#", "###.#######O#", "#...###.###O#", "###.###.###.#", "#.........#.#", "#####.#.#####", "#O....#...#.#", "#####.#.###.#", "#O..O.#....E#", "#############" },
+        { "#############", "#S..###.#####", "###.###O#####", "###...#...###", "###.#.#.#.###", "#.O.#...#...#", "###.#.#####.#", "#OO.#.###...#", "#.#.#.###.###", "#O#.#.###.###", "#.###.###.###", "#.#.....#...#", "#.#.#O###.#.#", "#.#.#...#.#E#", "#############" },
     },
     {   /* ADULT */
         { "#############", "#S#.........#", "#.#.#.###.#.#", "#...#.#O#O#O#", "#.#.#.#.#####", "#O#.#.......#", "#.#.###.#.###", "#.#.#...#...#", "#O#.#.#######", "#.#.#....O#.#", "#######.###.#", "#OOOO....O..#", "#.#.#.#######", "#.#.#......E#", "#############" },
@@ -966,8 +1003,80 @@ static void mz_reset_ball(void)
     lv_obj_set_pos(s_mz_ball, (lv_coord_t)s_mz_x, (lv_coord_t)s_mz_y);
 }
 
-/* Axis-separated collision: move X, undo if blocked, then move Y. Simple,
- * and it lets the ball slide along a wall instead of sticking to it. */
+/* --- COLLISION [regression fix] -----------------------------------------
+ *
+ * The previous version moved the whole frame's distance in one go, tested
+ * ONE line of the Visitor's box per axis, and snapped back to the old
+ * position when that test failed. Three faults, and they compounded:
+ *
+ *   1. OFF BY ONE. It tested `nx + MZ_BALL`, which is the pixel just PAST
+ *      the right edge - so with 4 px of clearance in a 28 px corridor the
+ *      Visitor was blocked while a pixel of gap remained. That alone reads
+ *      as sticking.
+ *   2. CENTRE-LINE ONLY. The X test sampled the vertical centre and the Y
+ *      test the horizontal centre, so neither saw a CORNER. A 20 px box in
+ *      28 px cells straddles two rows most of the time, so a corner could
+ *      slip into a wall unnoticed.
+ *   3. NO WAY OUT. Once even slightly embedded, the test asked only "is the
+ *      new position blocked?" - never "is this move an improvement?" - so
+ *      every candidate position was blocked and the Visitor was trapped for
+ *      good. That is the corner trap.
+ *
+ * The fix keeps the axis separation, which was right and is what lets a
+ * blocked X still slide along Y:
+ *
+ *   - mz_blocked() is a real box test over every cell the Visitor overlaps,
+ *     using inclusive edges, so corners are seen;
+ *   - movement is SUB-STEPPED a pixel at a time and stops at the last free
+ *     position, so a fast tilt cannot tunnel or embed, and the Visitor rests
+ *     flush against the wall instead of snapping back;
+ *   - if a frame ever begins already overlapping, movement is allowed
+ *     unconditionally for that frame, so nothing can be trapped permanently.
+ *     Sub-stepping means this should never fire; it logs if it does. */
+
+/* Every cell the Visitor's box overlaps at (x, y). floorf, not a cast: a
+ * cast truncates toward zero, which is the wrong direction left of / above
+ * the grid origin and would read an out-of-bounds box as in-bounds. */
+static bool mz_blocked(float x, float y)
+{
+    const int cx0 = (int)floorf((x - MZ_X0) / MZ_CELL);
+    const int cx1 = (int)floorf((x + MZ_BALL - 1 - MZ_X0) / MZ_CELL);
+    const int cy0 = (int)floorf((y - MZ_Y0) / MZ_CELL);
+    const int cy1 = (int)floorf((y + MZ_BALL - 1 - MZ_Y0) / MZ_CELL);
+    for (int cy = cy0; cy <= cy1; cy++)
+        for (int cx = cx0; cx <= cx1; cx++)
+            if (mz_wall(cx, cy)) return true;
+    return false;
+}
+
+/* Slide one axis as far as it will go, a pixel at a time. `vel` is zeroed on
+ * contact so a held tilt does not keep pressing into the wall - the next
+ * frame recomputes it from the live tilt, which is what makes "release or
+ * change the tilt and you move away normally" true. */
+static float mz_slide(float pos, float other, float *vel, bool horizontal)
+{
+    const float d = *vel;
+    if (d == 0.0f) return pos;
+    const float dir = (d > 0.0f) ? 1.0f : -1.0f;
+    float moved = 0.0f, p = pos;
+
+    while (fabsf(moved) < fabsf(d)) {
+        float s = dir;                       /* one pixel */
+        if (fabsf(d - moved) < 1.0f) s = d - moved;   /* the last fraction */
+        const float np = p + s;
+        if (horizontal ? mz_blocked(np, other) : mz_blocked(other, np)) {
+            *vel = 0.0f;
+            break;
+        }
+        p = np;
+        moved += s;
+    }
+    return p;
+}
+
+/* Axis-separated: move X, then move Y from wherever X ended up. A wall on
+ * one axis therefore never blocks the other, which is what stops corners
+ * trapping the player. */
 static void mz_step(lv_timer_t *t)
 {
     (void)t;
@@ -1010,21 +1119,19 @@ static void mz_step(lv_timer_t *t)
     if (s_mz_vy < -6.0f) s_mz_vy = -6.0f;
 
     const float r = MZ_BALL / 2.0f;
-    float nx = s_mz_x + s_mz_vx;
-    const float cyc = s_mz_y + r;
-    if (mz_wall((int)((nx - MZ_X0) / MZ_CELL), (int)((cyc - MZ_Y0) / MZ_CELL)) ||
-        mz_wall((int)((nx + MZ_BALL - MZ_X0) / MZ_CELL), (int)((cyc - MZ_Y0) / MZ_CELL))) {
-        nx = s_mz_x; s_mz_vx = 0.0f;
-    }
-    s_mz_x = nx;
 
-    float ny = s_mz_y + s_mz_vy;
-    const float cxc = s_mz_x + r;
-    if (mz_wall((int)((cxc - MZ_X0) / MZ_CELL), (int)((ny - MZ_Y0) / MZ_CELL)) ||
-        mz_wall((int)((cxc - MZ_X0) / MZ_CELL), (int)((ny + MZ_BALL - MZ_Y0) / MZ_CELL))) {
-        ny = s_mz_y; s_mz_vy = 0.0f;
+    if (mz_blocked(s_mz_x, s_mz_y)) {
+        /* Should be unreachable: sub-stepping never leaves the Visitor
+         * inside a wall, and it starts at a cell centre. If it ever happens
+         * anyway, moving freely for one frame is the guaranteed way out -
+         * being briefly wrong is recoverable, being stuck is not. */
+        Serial.println("MAZE: recovered from an overlapping start position");
+        s_mz_x += s_mz_vx;
+        s_mz_y += s_mz_vy;
+    } else {
+        s_mz_x = mz_slide(s_mz_x, s_mz_y, &s_mz_vx, true);
+        s_mz_y = mz_slide(s_mz_y, s_mz_x, &s_mz_vy, false);
     }
-    s_mz_y = ny;
 
     lv_obj_set_pos(s_mz_ball, (lv_coord_t)s_mz_x, (lv_coord_t)s_mz_y);
 
@@ -1047,6 +1154,119 @@ static void mz_step(lv_timer_t *t)
     }
 }
 
+/* TEST: put the Visitor on the exit and let the REAL win path run.
+ *
+ * Only the tilting is substituted. The next mz_step() tick reads 'E' at the
+ * Visitor's centre exactly as it would after a genuine run, so finish_game(),
+ * the record write and the NVS save are all the shipping ones - which is the
+ * whole point, since "does the best time persist" is a question about that
+ * path and not about the accelerometer. */
+void games_maze_warp_to_exit(void)
+{
+    if (!s_mz_timer) { Serial.println("no maze running"); return; }
+    for (int y = 0; y < MZ_H; y++)
+        for (int x = 0; x < MZ_W; x++)
+            if (s_mz[y][x] == 'E') {
+                s_mz_x = MZ_X0 + x * MZ_CELL + (MZ_CELL - MZ_BALL) / 2.0f;
+                s_mz_y = MZ_Y0 + y * MZ_CELL + (MZ_CELL - MZ_BALL) / 2.0f;
+                s_mz_vx = s_mz_vy = 0.0f;
+                Serial.println("(test) placed on the exit - the real win path takes over");
+                return;
+            }
+    Serial.println("no exit in this maze");
+}
+
+/* --- COLLISION SWEEP [test] ----------------------------------------------
+ * Drives the SHIPPED mz_slide()/mz_blocked() at maximum speed into every
+ * wall and corner of all sixteen mazes and checks the three properties the
+ * regression fix has to guarantee. It exists because the alternative was
+ * tilting the board by hand and concluding "felt fine", and because a test
+ * that reimplements the collision maths would prove nothing about the code
+ * that ships.
+ *
+ *   1. NEVER EMBEDDED - after any move the box overlaps no wall, however
+ *      fast it was travelling. Covers tunnelling.
+ *   2. NEVER TRAPPED - drive hard into a wall, then reverse; the Visitor
+ *      must come away. Covers corners and "release the tilt and you move".
+ *   3. ONE AXIS BLOCKED STILL SLIDES ON THE OTHER - the property that makes
+ *      a corner passable rather than a trap.
+ * ======================================================================= */
+void games_maze_collision_sweep(void)
+{
+    const float V = 6.0f;          /* the velocity clamp in mz_step() */
+    uint32_t placed = 0, embedded = 0, trapped = 0, no_slide = 0;
+
+    Serial.println();
+    Serial.println("=== MAZE COLLISION SWEEP ==================================");
+
+    for (uint8_t st = 0; st < 4; st++) {
+        for (uint8_t v = 0; v < MZ_VARIANTS; v++) {
+            const char **tpl = MZ_TPL[st][v];
+            for (int y = 0; y < MZ_H; y++) {
+                for (int x = 0; x < MZ_W; x++) s_mz[y][x] = tpl[y][x];
+                s_mz[y][MZ_W] = 0;
+            }
+
+            for (int cy = 0; cy < MZ_H; cy++) {
+                for (int cx = 0; cx < MZ_W; cx++) {
+                    if (s_mz[cy][cx] == '#') continue;
+                    const float ox = MZ_X0 + cx * MZ_CELL + (MZ_CELL - MZ_BALL) / 2.0f;
+                    const float oy = MZ_Y0 + cy * MZ_CELL + (MZ_CELL - MZ_BALL) / 2.0f;
+                    if (mz_blocked(ox, oy)) continue;     /* cell too tight */
+
+                    static const int DX[8] = { 1,-1, 0, 0, 1, 1,-1,-1 };
+                    static const int DY[8] = { 0, 0, 1,-1, 1,-1, 1,-1 };
+                    for (uint8_t d = 0; d < 8; d++) {
+                        float px = ox, py = oy;
+                        placed++;
+
+                        /* 1. slam into the wall for 40 frames */
+                        for (uint8_t f = 0; f < 40; f++) {
+                            float vx = DX[d] * V, vy = DY[d] * V;
+                            px = mz_slide(px, py, &vx, true);
+                            py = mz_slide(py, px, &vy, false);
+                            if (mz_blocked(px, py)) { embedded++; break; }
+                        }
+                        const float hx = px, hy = py;
+
+                        /* 3. a blocked axis must not block the other one */
+                        if (DX[d] && DY[d]) {
+                            float tx = hx, ty = hy;
+                            float vx = -DX[d] * V, vy = 0.0f;
+                            tx = mz_slide(tx, ty, &vx, true);
+                            vy = -DY[d] * V;
+                            ty = mz_slide(ty, tx, &vy, false);
+                            if (fabsf(tx - hx) < 0.5f && fabsf(ty - hy) < 0.5f)
+                                no_slide++;
+                        }
+
+                        /* 2. reverse out - it must come away */
+                        for (uint8_t f = 0; f < 20; f++) {
+                            float vx = -DX[d] * V, vy = -DY[d] * V;
+                            px = mz_slide(px, py, &vx, true);
+                            py = mz_slide(py, px, &vy, false);
+                        }
+                        if (fabsf(px - hx) < 2.0f && fabsf(py - hy) < 2.0f) trapped++;
+                    }
+                }
+            }
+        }
+    }
+
+    Serial.printf("  %lu launches from every open cell x 8 directions, 16 mazes\n",
+                  (unsigned long)placed);
+    Serial.printf("  embedded in a wall : %lu   (must be 0)\n", (unsigned long)embedded);
+    Serial.printf("  trapped, could not reverse out : %lu   (must be 0)\n",
+                  (unsigned long)trapped);
+    Serial.printf("  diagonal hit that could slide on NEITHER axis : %lu\n",
+                  (unsigned long)no_slide);
+    Serial.println("  (the last one is >0 only for true pockets, where both");
+    Serial.println("   neighbours really are wall - that is a corner, not a trap)");
+    Serial.printf("  VERDICT: %s\n",
+                  (embedded == 0 && trapped == 0) ? "PASS" : "*** FAIL ***");
+    Serial.println("-----------------------------------------------------------");
+}
+
 static void maze_start(void)
 {
     body_reset();
@@ -1059,9 +1279,10 @@ static void maze_start(void)
      * the 64 was verified offline for a route AND a hole-free route, so
      * picking at random can never hand out an unsolvable maze.
      *
-     * The templates within a stage were selected to share a route length -
-     * all four Adult mazes are 35 cells, all four Kid mazes 31 - so a repeat
-     * play changes the SHAPE without changing how hard it is. Mirroring also
+     * The templates within a stage share a route length - all four Adult
+     * mazes are 34 cells, all four Kid and Teen mazes 30, all four Baby
+     * mazes 26-30 - so a repeat play changes the SHAPE without changing how
+     * hard it is, in either direction. Mirroring also
      * moves the start and exit corners, which is what stops a familiar
      * template being recognisable at a glance. */
     const uint8_t v  = (uint8_t)random(0, MZ_VARIANTS);

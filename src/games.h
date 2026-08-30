@@ -29,6 +29,18 @@ typedef enum {
 } game_sfx_t;
 void games_sfx(game_sfx_t s);
 
+/* TEST: place the Visitor on the maze exit so the real win path runs. */
+void games_maze_warp_to_exit(void);
+
+/* TEST: press the open game's Start button, via the same path the button
+ * uses. games_launch() only opens the intro screen. */
+void games_press_start(void);
+
+/* TEST: drive the shipped maze collision code at full speed into every wall
+ * and corner of all sixteen mazes. See the implementation for the three
+ * properties it checks. */
+void games_maze_collision_sweep(void);
+
 #ifdef __cplusplus
 }
 #endif
