@@ -128,9 +128,39 @@ load_result_t storage_load(save_t *out)
 
     /* --- migration chain: v(n) -> v(n+1) ---------------------------------- */
 
-    /* The chain runs v1 -> v2 -> v3, each step a prefix copy plus a zeroed
-     * tail, because every schema has appended only. A v1 save therefore
-     * reaches v3 through both steps rather than needing its own path. */
+    /* The chain runs v1 -> v2 -> ... -> v6, each step a prefix copy plus a
+     * zeroed tail, because every schema has appended only. A v1 save
+     * therefore reaches the current schema through one copy rather than
+     * needing its own path per hop.
+     *
+     * NOTHING HERE REPLAYS HISTORY. The migration never sets evo_announce,
+     * never re-runs evolve_pick_form() for a stage already in evo_path[], and
+     * never re-adds a journal entry: the forms the Visitor already holds are
+     * its actual past, and a migration that re-announced them would show a
+     * child a transformation that happened days ago. Stage is recomputed from
+     * the clock at boot by pet_apply_stage_for_day(), which walks the
+     * boundaries in order and records each against the day it belongs to. */
+    if (cand->schema == 5) {
+        if (cand->struct_size != SAVE_V5_SIZE || stored != SAVE_V5_SIZE)
+            return LOAD_CORRUPT;
+        const uint32_t want = storage_crc32(scratch + CRC_OFFSET,
+                                            SAVE_V5_SIZE - CRC_OFFSET);
+        if (want != cand->crc32) return LOAD_CORRUPT;
+        memset(out, 0, sizeof(save_t));
+        memcpy(out, cand, SAVE_V5_SIZE);
+        out->schema      = SAVE_SCHEMA_VERSION;
+        out->struct_size = sizeof(save_t);
+        /* depart_day 0 means "never projected". The first re-evaluation
+         * seeds it from the care history the save already carries, and the
+         * minimum-notice floor stops a save that is ALREADY past day 9 from
+         * being handed a departure date in the past. A v5 Visitor was living
+         * under the fixed 21-day visit, so it has no lock to preserve and
+         * depart_locked / depart_due_ts are correctly zero. */
+        memcpy(&s_shadow, out, sizeof(save_t));
+        s_shadow_valid = true;
+        return LOAD_MIGRATED;
+    }
+
     if (cand->schema == 4) {
         if (cand->struct_size != SAVE_V4_SIZE || stored != SAVE_V4_SIZE)
             return LOAD_CORRUPT;
@@ -139,7 +169,7 @@ load_result_t storage_load(save_t *out)
         if (want != cand->crc32) return LOAD_CORRUPT;
         memset(out, 0, sizeof(save_t));
         memcpy(out, cand, SAVE_V4_SIZE);
-        out->schema      = 5;
+        out->schema      = SAVE_SCHEMA_VERSION;
         out->struct_size = sizeof(save_t);
         /* bath_target_h zero means "draw one on the next cycle" - correct
          * for a save that predates randomised targets. */
@@ -156,7 +186,7 @@ load_result_t storage_load(save_t *out)
         if (want != cand->crc32) return LOAD_CORRUPT;
         memset(out, 0, sizeof(save_t));
         memcpy(out, cand, SAVE_V3_SIZE);
-        out->schema      = 5;
+        out->schema      = SAVE_SCHEMA_VERSION;
         out->struct_size = sizeof(save_t);
         /* zeroed egg fields mean "no egg pending", which is right for a save
          * whose Visitor had already hatched */
@@ -174,7 +204,7 @@ load_result_t storage_load(save_t *out)
 
         memset(out, 0, sizeof(save_t));
         memcpy(out, cand, SAVE_V2_SIZE);
-        out->schema      = 5;
+        out->schema      = SAVE_SCHEMA_VERSION;
         out->struct_size = sizeof(save_t);
         /* New fields default to zero, which is the correct v2 meaning: no
          * personality recorded yet, no evolution path, nothing to announce.
@@ -198,7 +228,7 @@ load_result_t storage_load(save_t *out)
 
         memset(out, 0, sizeof(save_t));
         memcpy(out, cand, SAVE_V1_SIZE);
-        out->schema      = 5;      /* v1 -> ... -> v5 in one hop: both steps
+        out->schema      = SAVE_SCHEMA_VERSION;   /* v1 -> ... -> v6 in one hop: every step
                                     * are "append and zero", so the result is
                                     * identical to running them separately */
         out->struct_size = sizeof(save_t);
@@ -256,6 +286,56 @@ bool storage_wipe(void)
     if (!s_open) return false;
     s_shadow_valid = false;
     return s_prefs.clear();
+}
+
+bool storage_write_fake_v5(uint32_t hatch_ts, float hunger, float care_happy,
+                           uint8_t form_id, uint8_t trait_a, uint8_t trait_b)
+{
+    if (!s_open) return false;
+
+    /* v5 is a strict byte PREFIX of v6, so a v6-shaped struct truncated to
+     * SAVE_V5_SIZE is a byte-exact v5 blob. Writing it that way rather than
+     * hand-packing means the fixture cannot drift away from the real layout. */
+    uint8_t buf[SAVE_V5_SIZE];
+    memset(buf, 0, sizeof(buf));
+    save_t *v = (save_t *)buf;
+
+    v->schema      = 5;
+    v->struct_size = SAVE_V5_SIZE;
+    v->hatch_ts    = hatch_ts;
+    v->last_sim_ts = hatch_ts;
+    v->hunger      = hunger;
+    v->happiness   = 70.0f;
+    v->cleanliness = 65.0f;
+    v->energy      = 60.0f;
+    v->discipline  = 55.0f;
+    v->weight_g    = 61.0f;
+    v->stage       = 4;            /* Adult, already past the new boundaries */
+    v->form_id     = form_id;
+    v->days_alive_max = 11;
+    v->care_happy  = care_happy;
+    v->care_fed    = 72.0f;
+    v->care_clean  = 68.0f;
+    v->care_sleep  = 70.0f;
+    v->care_discipline = 60.0f;
+    v->personality_trait_1 = trait_a;
+    v->personality_trait_2 = trait_b;
+    v->evo_path[0] = 1; v->evo_path[1] = 2;
+    v->evo_path[2] = 3; v->evo_path[3] = form_id;
+    v->acc_hours   = 240.0f;
+    v->evo_announce = 0;           /* nothing outstanding - must STAY 0 */
+    v->journal[0].ts = hatch_ts;
+    v->journal[0].type = 0;        /* JM_HATCHED */
+    v->bath_target_h = 4.25f;
+
+    v->crc32 = storage_crc32(buf + CRC_OFFSET, SAVE_V5_SIZE - CRC_OFFSET);
+
+    const size_t w = s_prefs.putBytes(NVS_KEY_SAVE, buf, SAVE_V5_SIZE);
+    s_shadow_valid = false;
+    if (w != SAVE_V5_SIZE)
+        Serial.printf("fake v5 write: %u of %u bytes\n", (unsigned)w,
+                      (unsigned)SAVE_V5_SIZE);
+    return w == SAVE_V5_SIZE;
 }
 
 bool storage_write_fake_v1(float hunger, float weight_g, uint16_t days)

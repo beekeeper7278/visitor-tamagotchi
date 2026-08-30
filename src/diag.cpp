@@ -1008,15 +1008,46 @@ static void diag_clock_to(uint8_t hour, uint8_t minute, const char *what)
 static void seed_engage(pet_state_t *p, float target)
 {
     p->stage_start_day = 0;
-    const float stage_days = (float)p->days_alive + 0.5f;
+    /* MUST be the same denominator evolve_scores() uses, not a copy of it.
+     * This used to read days_alive + 0.5 - an integer cache, with no floor -
+     * while evolve_scores() moved to a floored fractional age. On a Visitor
+     * younger than half a day the two differed by 2x, so every seeded fixture
+     * produced HALF the engagement it claimed and every cs derived from it
+     * was low. Note games_played is an integer, so engagement is quantised at
+     * 100/(2*stage_days) per game: seed on an older Visitor for fine steps. */
+    const float stage_days = evolve_stage_days();
     float g = target * 2.0f * stage_days / 100.0f;
     if (g < 0.0f) g = 0.0f;
     p->games_played = (uint16_t)(g + 0.5f);
 }
 
-static void diag_seed_care(int level)   /* 0 poor, 1 mid, 2 excellent */
+static void diag_seed_care(int level)   /* 0 poor, 1 mid, 2 excellent, 3 good */
 {
     pet_state_t *p = pet_mutable();
+    if (level == 3) {
+        /* GOOD - the fourth fixture. The three original seeds gave the four
+         * departure bands only three anchors, so 13-14 days had nothing to
+         * test against.
+         *
+         * The values are not invented to taste: they are solved BACKWARDS
+         * from the target. A 13-14 day departure needs stay01 near 0.73,
+         * which needs 0.80*cs + 0.10*(ba+100) ~= 73. cs 75.9 with ba 24.3
+         * gives 73.2. Everything below is then a plausible history that
+         * produces those two numbers - attentive but not flawless: fed and
+         * clean, played with often, one need missed, nothing unfair. */
+        p->care_happy = 78.0f; p->care_fed = 80.0f; p->care_clean = 74.0f;
+        p->care_sleep = 76.0f; p->care_discipline = 68.0f; p->nutrition = 22.0f;
+        p->happiness = 80.0f; p->hunger = 65.0f; p->cleanliness = 76.0f;
+        p->energy = 78.0f; p->discipline = 68.0f;
+        seed_engage(p, 68.0f);
+        p->meals = 10; p->junk_meals = 2;
+        p->ignored_requests = 1; p->disc_unfair = 0; p->disc_correct = 2;
+        p->weight_g = 55.0f;
+        Serial.println("(test) seeded GOOD care history");
+        evolve_explain();
+        visit_report();
+        return;
+    }
     if (level == 1) {
         /* Middling: fed and clean enough, played with sometimes, discipline
          * about neutral, a couple of needs missed. The everyday case. */
@@ -1030,6 +1061,7 @@ static void diag_seed_care(int level)   /* 0 poor, 1 mid, 2 excellent */
         p->weight_g = 58.0f;
         Serial.println("(test) seeded MID care history");
         evolve_explain();
+        visit_report();
         return;
     }
     const bool good = (level == 2);
@@ -1052,6 +1084,7 @@ static void diag_seed_care(int level)   /* 0 poor, 1 mid, 2 excellent */
     }
     Serial.printf("(test) seeded %s care history\n", good ? "EXCELLENT" : "POOR");
     evolve_explain();
+    visit_report();
 }
 
 /* TIME TRAVEL. Moves the hatch timestamp BACKWARDS, which ages the Visitor
@@ -1089,6 +1122,10 @@ static void diag_age_report(void)
     Serial.printf("  stage          : %s   boundaries %.1f / %.1f / %.1f\n",
                   pet_stage_name(p->stage), (double)STAGE_DAY_KID,
                   (double)STAGE_DAY_TEEN, (double)STAGE_DAY_ADULT);
+    Serial.printf("  departure      : day %.2f %s   (window %.0f-%.0f)\n",
+                  (double)visit_depart_day(),
+                  visit_locked() ? "LOCKED" : "projected",
+                  (double)VISIT_DEPART_MIN_DAY, (double)VISIT_DEPART_MAX_DAY);
     Serial.println("-----------------------------------------------------------");
 }
 
@@ -1129,7 +1166,7 @@ void diag_help(void)
     Serial.println("  l  toggle Lights (affects sleep recovery)");
     Serial.println("  h  simulate 8 h away    H  simulate 72 h    j  simulate 8 days");
     Serial.println("  p  force a save now + write/skip counters");
-    Serial.println("  V  v1 -> v2 schema migration test");
+    Serial.println("  V  v1 -> v2 migration test   #  v5 -> v6 migration test");
     Serial.println("  Y  persistence fidelity test (freezes sim, then reboot)");
     Serial.println("  y  toggle simulation suspend");
     Serial.println("  N  clock -> 20:30 bedtime   G  -> 07:30 wake   A  -> 13:30 nap");
@@ -1140,9 +1177,11 @@ void diag_help(void)
     Serial.println("  <  explain evolution scores   >  discipline report");
     Serial.println("  /  force a mischief window (test)");
     Serial.println("  F  force next stage + evolution   O  arm offline evo reveal");
-    Serial.println("  +  EXCELLENT care   =  MID care   _  POOR care history");
-    Serial.println("  .  age +6h   ,  age +1h   *  age clock report");
-    Serial.println("  J  visit records report   @  farewell   ;  acknowledge   :  start egg (10s)");
+    Serial.println("  +  EXCELLENT care   =  MID care   &  GOOD care   _  POOR care");
+    Serial.println("  ,  age +1h   .  age +6h   %  age +24h   *  age clock report");
+    Serial.println("  $  departure report + calibration   !  age pending departure 24h");
+    Serial.println("  J  visit records report   @  jump to departure   ;  acknowledge");
+    Serial.println("  :  start egg (10s)");
     Serial.println("  B  one sample bubble (cycles tiers)");
     Serial.println("  S  BUBBLE STRESS TEST - 20 requests, most should refuse");
     Serial.println("  L  BUBBLE LAYOUT TEST - 4 strings x 3 pet positions");
@@ -1279,12 +1318,56 @@ void diag_serial_tick(void)
             }
             case ';': farewell_acknowledge();    break;
             case 'B'+512: break;
-            case '@': {   /* jump to the end of the visit */
-                pet_mutable()->days_alive = VISIT_LENGTH_DAYS;
-                Serial.println("(test) visit end reached - farewell should start");
-                farewell_begin();
+            case '@': {
+                /* Jump to the PROJECTED departure by moving hatch_ts, so the
+                 * age clock genuinely reads past the date and the witnessing
+                 * rules in farewell_due() actually run. The old version set
+                 * days_alive directly and then called farewell_begin() by
+                 * hand, which tested the SCREEN and nothing else. */
+                pet_state_t *pp = pet_mutable();
+                if (!pp->hatch_ts || !rtc_trusted()) {
+                    Serial.println("no trusted clock / not hatched - cannot jump");
+                    break;
+                }
+                if (pp->depart_day <= 0.0f) {
+                    Serial.println("no projection yet - forcing one");
+                    visit_advance(VISIT_DEPART_EVAL_HOURS);
+                }
+                const float want = pp->depart_day > 0.0f ? pp->depart_day
+                                                         : VISIT_DEPART_MIN_DAY;
+                pp->hatch_ts = rtc_now() - (uint32_t)(want * 86400.0f) - 60UL;
+                pet_refresh_age();
+                pet_apply_stage_for_day(pet_age_days());
+                Serial.printf("(test) jumped to day %.2f - departure is due; the "
+                              "farewell now waits to be WITNESSED\n",
+                              (double)pet_age_days());
+                visit_report();
                 break;
             }
+            case '$': visit_report();            break;
+            case '!': {
+                /* Back-date a PENDING departure by 24 h, so the 48 h hold cap
+                 * can be crossed without waiting two real days. Moves the
+                 * stamp, not the clock: shifting the RTC would also move the
+                 * sleep window, which is the very thing being tested. */
+                pet_state_t *pp = pet_mutable();
+                if (!pp->depart_due_ts) {
+                    Serial.println("departure is not pending - nothing to age");
+                    break;
+                }
+                pp->depart_due_ts -= 24UL * 3600UL;
+                const uint32_t now = rtc_now();
+                Serial.printf("(test) pending departure is now %lu h old "
+                              "(cap %d) - asleep: %s\n",
+                              (unsigned long)((now - pp->depart_due_ts) / 3600UL),
+                              VISIT_HOLD_MAX_HOURS,
+                              pet_get()->asleep ? "YES, must still wait" : "no");
+                persist_mark_dirty("aged pending departure");
+                persist_save(true);
+                break;
+            }
+            case '&': diag_seed_care(3);         break;
+            case '%': diag_time_travel(24);      break;
             case '+': diag_seed_care(2);         break;
             case '=': diag_seed_care(1);         break;
             case '_': diag_seed_care(0);         break;
@@ -1304,6 +1387,45 @@ void diag_serial_tick(void)
                       Serial.printf("simulation %s\n",
                                     pet_sim_suspended() ? "SUSPENDED" : "running");
                       break;
+            case 'v'+1024: break;
+            case '#': {   /* v5 -> v6: the migration this pass actually added */
+                Serial.println();
+                Serial.println("=== v5 -> v6 MIGRATION TEST ===============================");
+                const uint32_t hatch = (rtc_trusted() ? rtc_now() : 1787000000UL)
+                                     - (uint32_t)(11.4f * 86400.0f);
+                storage_write_fake_v5(hatch, 44.0f, 81.0f, FORM_ADULT_SWEET,
+                                      PERS_TIDY, PERS_CURIOUS);
+                const load_result_t r = persist_load();
+                const pet_state_t *q = pet_get();
+                Serial.printf("  result       : %s  (expect MIGRATED)\n",
+                              storage_load_result_str(r));
+                Serial.printf("  hunger       : %.0f   (expect 44 - preserved)\n", q->hunger);
+                Serial.printf("  care_happy   : %.0f   (expect 81 - accumulator kept)\n",
+                              q->care_happy);
+                Serial.printf("  personality  : %s + %s  (expect tidy + curious)\n",
+                              evolve_trait_name(q->trait_a), evolve_trait_name(q->trait_b));
+                Serial.printf("  form         : %s   (expect Sweet - NOT re-picked)\n",
+                              forms_name(q->form_id));
+                Serial.printf("  evo_path     : %u/%u/%u/%u  (preserved)\n",
+                              q->evo_path[0], q->evo_path[1], q->evo_path[2],
+                              q->evo_path[3]);
+                Serial.printf("  evo_announce : %u   (MUST be 0 - no replayed reveal)\n",
+                              q->evo_announce);
+                Serial.printf("  journal      : %u entries  (preserved)\n",
+                              journal_count());
+                Serial.printf("  bath_target  : %.2f h  (preserved)\n", q->bath_target_h);
+                Serial.printf("  age          : %.2f days -> stage %s (recomputed)\n",
+                              (double)pet_age_days(), pet_stage_name(q->stage));
+                Serial.printf("  depart_day   : %.2f  (expect 0 - new in v6)\n",
+                              (double)q->depart_day);
+                Serial.printf("  depart_lock  : %u   (expect 0 - new in v6)\n",
+                              q->depart_locked);
+                Serial.println("  now let it project: the notice floor must keep a save");
+                Serial.println("  that is ALREADY past day 9 from departing in the past.");
+                visit_advance(VISIT_DEPART_EVAL_HOURS);
+                visit_report();
+                break;
+            }
             case 'V': {
                 Serial.println();
                 Serial.println("=== v1 -> v2 MIGRATION TEST ===============================");

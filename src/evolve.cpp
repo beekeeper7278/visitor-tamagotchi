@@ -17,7 +17,7 @@
 
 static float clamp01_100(float v) { return v < 0 ? 0 : (v > 100 ? 100 : v); }
 
-/* EMA toward `sample` with a 24 h half-life [SPEC section 3]. */
+/* EMA toward `sample` with the ACCUM_HALFLIFE_HOURS half-life. */
 static void ema(float *acc, float sample, float hours)
 {
     const float alpha = 1.0f - powf(2.0f, -hours / ACCUM_HALFLIFE_HOURS);
@@ -57,18 +57,24 @@ void evolve_accumulate(float hours, bool asleep)
     p->acc_hours += hours;
 }
 
+/* Floored at 1.0. Over a 1-day Baby stage the old +0.5 smoothing let a
+ * single ignored request read as 0.67/day where the 3-day stage scored the
+ * same behaviour at 0.29/day - identical care, far worse score, purely
+ * because the stage got shorter. The floor keeps per-day rates comparable
+ * across stages of very different lengths. */
+float evolve_stage_days(void)
+{
+    const pet_state_t *p = pet_get();
+    float d = pet_age_days() - (float)p->stage_start_day + 0.5f;
+    return (d < 1.0f) ? 1.0f : d;
+}
+
 evo_scores_t evolve_scores(void)
 {
     const pet_state_t *p = pet_get();
     evo_scores_t s;
 
-    /* Floored at 1.0. Over a 1-day Baby stage the old +0.5 smoothing let a
-     * single ignored request read as 0.67/day where the 3-day stage scored
-     * the same behaviour at 0.29/day - identical care, far worse score,
-     * purely because the stage got shorter. The floor keeps per-day rates
-     * comparable across stages of very different lengths. */
-    float stage_days = pet_age_days() - (float)p->stage_start_day + 0.5f;
-    if (stage_days < 1.0f) stage_days = 1.0f;
+    const float stage_days = evolve_stage_days();
 
     s.engage = clamp01_100(100.0f * (float)p->games_played / (2.0f * stage_days));
 
@@ -152,9 +158,10 @@ uint8_t evolve_midadult_recheck(void)
 {
     const pet_state_t *p = pet_get();
     const uint8_t want = evolve_pick_form(STAGE_ADULT);
-    /* Improvement only. Without this, days 13-21 have no stakes and a
-     * redeemed Visitor gets no acknowledgement - but it must never regress,
-     * or late neglect would feel like a punishment rather than a story. */
+    /* Improvement only. Without this the back half of the Adult stretch has
+     * no stakes and a redeemed Visitor gets no acknowledgement - but it must
+     * never regress, or late neglect would feel like a punishment rather than
+     * a story. */
     return (adult_rank(want) > adult_rank(p->form_id)) ? want : p->form_id;
 }
 
@@ -177,6 +184,12 @@ void evolve_on_stage_entered(uint8_t stage, uint16_t day)
         Serial.printf("GROWTH SPURT: %.1f g -> %.1f g (baseline %.0f, history kept)\n",
                       before, p->weight_g, base);
     }
+    /* Draw a fresh bathroom target for the NEW stage. Without this the
+     * per-stage table only takes effect at the start of the next cycle, so a
+     * Visitor that grows up mid-cycle keeps its old band - measured on
+     * hardware, an Adult was still running a 2.68 h Baby target. */
+    care_new_bath_target();
+
     p->ignored_requests = 0;
     p->games_played     = 0;
     p->junk_meals       = 0;

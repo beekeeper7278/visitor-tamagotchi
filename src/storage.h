@@ -33,7 +33,7 @@ extern "C" {
  * The shadow copy used for write suppression lives in RAM, not NVS. */
 #define SAVE_SIZE_BUDGET 448
 
-#define SAVE_SCHEMA_VERSION 5
+#define SAVE_SCHEMA_VERSION 6
 
 /* Journal entry classes - see design doc section 11 */
 enum { JRN_MILESTONE = 0, JRN_RECORD = 1, JRN_FLAVOUR = 2 };
@@ -145,12 +145,42 @@ typedef struct __attribute__((packed)) {
     uint8_t  egg_choice;
     uint32_t egg_hatch_ts;
     float    bath_target_h;   /* schema 5: randomised cycle target */
+
+    /* --- schema 6: the variable visit -------------------------------------
+     * depart_day is PERSISTED rather than recomputed at boot. If it were
+     * recomputed the 36-hour lock would mean nothing across a power cycle:
+     * a child could reboot their way to a different goodbye date. Once the
+     * lock engages, this value is the answer and the save is what carries it.
+     *
+     * depart_due_ts is set the moment the date is reached, whether or not
+     * anyone was there to see it - so a held farewell knows how long it has
+     * been waiting, and the wait cap is measured from a real timestamp
+     * rather than from millis(), which resets on every boot. */
+    float    depart_day;      /* projected departure, in fractional age days */
+    uint32_t depart_due_ts;   /* unix seconds when it fell due; 0 = not yet  */
+    uint8_t  depart_locked;   /* 1 once inside VISIT_DEPART_LOCK_HOURS       */
+    uint8_t  stay_band;       /* 0 short 1 middle 2 long, resolved on depart */
 } save_t;
 
 #define SAVE_V3_SIZE 397
 /* schema 5 measures 407 and adds one float, so schema 4 was 403. Getting
- * this wrong rejects every v4 save as corrupt. */
+ * this wrong rejects every v4 save as corrupt.
+ *
+ * FROZEN SIZES, and the arithmetic that produced each one. Every schema has
+ * APPENDED ONLY, so each size is a strict byte prefix of the next and every
+ * migration is "copy the old blob, zero the tail":
+ *     v1 332
+ *     v2 363  = 332 + 31   (bathroom, accidents, the four mess arrays)
+ *     v3 397  = 363 + 34   (personality, evo_path, per-stage counters)
+ *     v4 403  = 397 +  6   (egg_color, egg_choice, egg_hatch_ts)
+ *     v5 407  = 403 +  4   (bath_target_h)
+ *     v6 417  = 407 + 10   (depart_day, depart_due_ts, depart_locked,
+ *                           stay_band)
+ * 417 of a 448 budget leaves 31 bytes of headroom. Getting one of these
+ * wrong rejects every save of that version as corrupt - it has happened
+ * once already - so recheck the arithmetic if you add a schema. */
 #define SAVE_V4_SIZE 403   /* schema 4 adds egg_choice; see the migration */          /* frozen: sizeof(save_t) at schema 3    */
+#define SAVE_V5_SIZE 407   /* frozen: sizeof(save_t) at schema 5          */
 
 /* Fail the BUILD rather than discover an over-budget blob on hardware. */
 #ifdef __cplusplus
@@ -183,6 +213,14 @@ uint32_t storage_crc32(const uint8_t *data, size_t len);
  * migration can actually be exercised on hardware. A migration path that has
  * never been run is a guess, not a feature. */
 bool storage_write_fake_v1(float hunger, float weight_g, uint16_t days);
+
+/* TEST ONLY: a synthetic, CRC-valid SCHEMA-5 blob carrying the state the
+ * v5 -> v6 migration has to preserve - accumulators, personality, evo_path
+ * and the journal - plus a hatch timestamp already past the new day-9
+ * departure floor. A migration that has never been RUN is a guess, and this
+ * is the one that had never been run. */
+bool storage_write_fake_v5(uint32_t hatch_ts, float hunger, float care_happy,
+                           uint8_t form_id, uint8_t trait_a, uint8_t trait_b);
 uint32_t storage_write_count(void);      /* writes since boot */
 uint32_t storage_skipped_count(void);    /* shadow-compare hits */
 const char *storage_load_result_str(load_result_t r);

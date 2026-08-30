@@ -52,6 +52,10 @@ void pet_init(void)
     s.egg_choice   = EGG_PALETTE_COUNT;    /* defaults to Random */
     s.bath_target_h = 0.0f;                /* drawn on the first cycle */
     s.egg_hatch_ts = 0;
+    s.depart_day    = 0.0f;                /* projected on the first eval */
+    s.depart_due_ts = 0;
+    s.depart_locked = 0;
+    s.stay_band     = 0;
     evolve_new_personality();
     s.hatch_ts = 0;
     s.last_sim_ts = 0;

@@ -6,30 +6,25 @@ device at the time of writing; where something is unverified it says so.
 
 ---
 
-## 0. READ THIS FIRST — the working tree is ahead of the last tag
+## 0. READ THIS FIRST - the work is committed on a branch
 
-**All of Phase 8, all of Phase 9 and the entire pacing pass are UNCOMMITTED.**
+**Superseded.** An earlier version of this section said Phase 8, Phase 9 and
+the pacing pass were all UNCOMMITTED and that `git checkout .` would destroy
+them. That is no longer true.
 
-The newest tag is `phase7-games-baseline` (`c39b3e1`). Everything since —
-evolution, personality, discipline, journal, Visit Records, farewell, the egg,
-the age-clock rework, schema 4 and 5 — exists only as modified/untracked files
-in the working tree.
+Everything is committed on branch **`wip/phase8-9-pacing`**:
 
-Untracked files that are entire subsystems:
+    acdd3a1  WIP: Phase 8-9 and gameplay pacing pass
+    e8726d0  Add continuation handoff document
+    c39b3e1  (tag: phase7-games-baseline)
 
-    src/evolve.{h,cpp}      src/discipline.{h,cpp}
-    src/journal.{h,cpp}     src/visitrec.{h,cpp}
-    src/farewell.{h,cpp}    docs/PACING-PASS-REQUIREMENTS.md
+The pacing pass finished on top of `acdd3a1` and is in the working tree,
+uncommitted, pending acceptance on hardware. `main` is still at
+`phase7-games-baseline` and nothing has been pushed.
 
-**Do not run `git checkout .`, `git reset --hard`, `git stash` or `git clean`.**
-Any of them destroys several phases of accepted, hardware-verified work.
-
-The user runs a strict phase gate: work is committed and tagged only after they
-accept it on hardware. Phase 8+9 was never formally accepted and the pacing
-pass is incomplete, which is why it is all still uncommitted. Ask before
-committing it; do not commit unaccepted work to `main` unilaterally.
-
----
+The phase gate still stands: work is committed and tagged only after the user
+accepts it on hardware. Ask before committing; do not merge to `main`
+unilaterally.
 
 ## 1. Current status
 
@@ -42,7 +37,7 @@ committing it; do not commit unaccepted work to `main` unilaterally.
 | 7 All four games | COMPLETE, tagged |
 | 8 Evolution / personality / discipline | COMPLETE, **uncommitted** |
 | 9 Journal / Visit Records / farewell / egg | COMPLETE, **uncommitted** |
-| Pacing & balance pass | **PARTIAL** — see §6 |
+| Pacing & balance pass | **COMPLETE, uncommitted** — see §6 |
 | 10 IMU personality, tilt calibration, audio | NOT STARTED |
 
 **Do not begin Phase 10** until the pacing pass is finished and accepted.
@@ -63,7 +58,7 @@ each time. There is no remote configured for this work.
 
 ## 3. Save schema
 
-**Schema 5. `sizeof(save_t)` = 407 bytes. `SAVE_SIZE_BUDGET` = 448.**
+**Schema 6. `sizeof(save_t)` = 417 bytes. `SAVE_SIZE_BUDGET` = 448.**
 A `static_assert` in `storage.h` fails the build if the blob overruns — leave it.
 
 Migration chain is `v1 -> v2 -> v3 -> v4 -> v5`, every step "copy the old blob,
@@ -79,7 +74,8 @@ would have discarded all v4 saves. Recheck arithmetic if you add a schema.
 Separate versioned NVS keys, deliberately NOT part of the pet blob:
 
 - `visitorg/grec` — game records (`gamerec.cpp`)
-- `visitorv/recs` — Visit Records, 233 B x 8 = 1872 B (`visitrec.cpp`)
+- `visitorv/recs` — Visit Records, 327 B x 8 = 2624 B (`visitrec.cpp`).
+  VISITREC_VERSION is 2; growing the record discarded v1 history once.
 
 Visit Records live apart because the pet blob is rewritten every few minutes
 and history must never be at risk from that path.
@@ -171,40 +167,55 @@ Never add an on-device generator.
 **Farewell tone is the hard rule:** warm, funny, kid-friendly, never
 guilt-heavy. A shorter visit is a consequence, not an accusation.
 
-## 6. Pacing pass — what is NOT done
+## 6. Pacing pass - COMPLETE, pending acceptance
 
-Implemented: age clock (§0), stage boundaries (§1), half-life rescale and
-`stage_days` floor (§3), schema 5 + migration (§5), per-stage randomised
-bathroom targets and the 0.25 sleep multiplier (§11/§12), warning tiers (§14),
-egg-selector layout fix (§15), time-travel console commands.
+Everything in `PACING-PASS-REQUIREMENTS.md` is implemented, built, flashed and
+tested on hardware. The items this document previously listed as missing are
+all done:
 
-**Not implemented:**
+- Variable visit length. `VISIT_LENGTH_DAYS` is gone. `VISIT_DEPART_MIN_DAY`
+  9.0 / `VISIT_DEPART_MAX_DAY` 16.0, mapped continuously.
+- Stay quality derived from `evolve_scores()` - no parallel counters.
+- Departure stability: drift clamp, forward-only notice floor, 36 h lock,
+  hint gating. All four verified, including lock survival across a power cycle.
+- Witnessed departure via `SF_FAREWELL_ARM` + `depart_due_ts`.
+  **`VISIT_HOLD_MAX_HOURS` (48) is a PRIORITY escalation, not an override.**
+  Past it the departure outranks a game, an open menu or a mischief window
+  and fires the instant it can - but it NEVER outranks sleep. The farewell is
+  witnessed or it does not happen, so the worst case is bounded by the wake
+  clock, not by the cap. `farewell_due()` tests `care_sleep_due()` as well as
+  `p->asleep`, which closes the boot window where `sim_catch_up()` has cleared
+  `asleep` but `care_tick()` has not yet re-asserted bedtime.
+- Farewell stay-length opener; `visit_rec_t` gains `care_band` + `length_band`.
+- Offline bathroom fairness: the meter now PARKS at 95 instead of drifting to
+  99, and the grace window is confirmed to run from boot.
+- Console: `&` GOOD seed, `$` departure report + calibration table,
+  `%` age +24 h, `#` v5 -> v6 migration test, rewritten `@`.
+- Schema 6 (417 B of a 448 B budget), v5 -> v6 migration exercised on hardware
+  with a synthetic fixture.
 
-- §6 variable visit length. `VISIT_LENGTH_DAYS` is STILL 21 in `config.h` and
-  still used by `farewell_due()` and the `@` command. The 9–16 day envelope,
-  `VISIT_DEPART_*` constants and the continuous mapping do not exist.
-- §7 `stay_quality` — no rolling/decayed stay score. Must be derived from
-  `evolve_scores()`, NOT a parallel counter set.
-- §8 departure stability — no drift clamp, no forward-only rule, no 36 h lock,
-  no hint gating.
-- §9 witnessed departure — `farewell_due()` still fires from `sim_timer_cb`
-  regardless of sleep or absence. `SF_FAREWELL_ARM` exists in `save_t.flags`
-  and is the intended flag; it is unused.
-- §10 farewell/Visit Record fields for stay length and care band.
-- §13 offline bathroom fairness on return.
-- §2 simulation-advance harness. Only the age-clock shift exists; `.` and `,`
-  move `hatch_ts` and do NOT exercise hunger/sleep/bathroom/care history.
-- §16 GOOD care seed (`diag_seed_care(3)`) — only POOR/MID/EXCELLENT exist, so
-  three fixtures for four target bands.
-- Most of §17's matrix, the departure-day calibration table, the age-copy
-  audit (§4), and Chonky reachability after the half-life change.
+Still open, and deliberately left for the user to decide:
+
+- Displayed-age copy. Stats, Pet Info and the Journal all print `day %d` from
+  the integer `days_alive`. Nothing reads *wrong*, but nothing acknowledges
+  that 1 day = 1 Visitor year either. Not rewritten unilaterally.
+- `care_fast_forward()` still passes `ctx.offline = false`. That is correct
+  for what `T` means (simulated time with the player present); the offline
+  path is exercised by `h` / `H` / `j`.
 
 ## 7. Current tuning values
 
     STAGE_DAY_KID/TEEN/ADULT      1.0 / 3.0 / 6.0   (float)
     ACCUM_HALFLIFE_HOURS          12.0
     EVO_EPS                       0.75
-    VISIT_LENGTH_DAYS             21   <- still fixed; §6 replaces this
+
+    VISIT_DEPART_MIN_DAY / MAX     9.0 / 16.0
+    VISIT_DEPART_MAX_DRIFT         0.15 days per re-evaluation
+    VISIT_DEPART_EVAL_HOURS        6.0  simulated hours
+    VISIT_DEPART_LOCK_HOURS        36     VISIT_HINT_HOURS 30
+    VISIT_DEPART_MIN_NOTICE_H      6.0    VISIT_HOLD_MAX_HOURS 48
+    VISIT_STAY_CURVE_K / _X0       8.0 / 0.628   (logistic, not linear)
+    VISIT_RECHECK_FRACTION         0.5  of the adult stretch
 
     SLEEP_START_HOUR / END        20 / 7      NAP 13–14, Baby only
     BATHROOM_SLEEP_RATE           0.25
@@ -294,7 +305,9 @@ seconds. Use `~/.platformio/penv/bin/python` (it has pyserial).
     N/G/A  clock -> bedtime / wake / nap         l  toggle lights
     7/8/9  burger / fruit / cake   0  bathroom   C  clean
     Q/q/E/z  the four games        K  exit game  a  game records
-    J  visit records     @  farewell   ;  acknowledge   :  start egg (10 s)
+    J  visit records     @  jump to departure  ;  acknowledge  :  start egg
+    $  departure report + calibration table   !  age pending departure 24h
+    &  GOOD care seed    %  age +24h    #  v5 -> v6 migration test
     X  reset Visitor     Y  persistence fidelity  y  suspend simulation
     m  LVGL heap         v  pager/pet state       s  storage self-test
     M  menu toggle       P/D  pet screen / Phase 1 test card

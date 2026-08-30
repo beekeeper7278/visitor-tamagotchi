@@ -11,6 +11,7 @@
 #include "gamerec.h"
 #include "evolve.h"
 #include "forms.h"
+#include "farewell.h"
 
 static sim_report_t s_rep;
 
@@ -110,7 +111,10 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out)
         }
         if (p->stage < 4) p->evo_path[p->stage - (p->stage > 0 ? 1 : 0)] = p->form_id;
         evolve_on_stage_entered(p->stage, p->days_alive);
-    } else if (p->stage == STAGE_ADULT && p->days_alive >= 18) {
+    } else if (p->stage == STAGE_ADULT && pet_age_days() >= visit_recheck_day()) {
+        /* Was a hardcoded "day 18" - a fixed fraction of the old fixed 21-day
+         * visit, and meaningless against a variable one. Now halfway through
+         * whatever adult stretch this Visitor actually has. */
         const uint8_t f = evolve_midadult_recheck();
         if (f != p->form_id) {
             Serial.printf("EVOLVE: glow-up %s -> %s\n",

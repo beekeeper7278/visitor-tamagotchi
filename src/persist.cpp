@@ -41,6 +41,10 @@ static void pack(save_t *b)
     if (care_lights_on()) b->flags |= SF_LIGHTS_ON;
     if (!rtc_trusted())   b->flags |= SF_RTC_SUSPECT;
     if (p->hatch_ts)      b->flags |= SF_HATCHED;
+    /* Armed = the departure moment has passed but nobody has SEEN the
+     * goodbye yet. depart_due_ts carries when; this flag carries that it
+     * is outstanding, which is what SF_FAREWELL_ARM was reserved for. */
+    if (p->depart_due_ts) b->flags |= SF_FAREWELL_ARM;
 
     b->meals            = p->meals;
     b->cakes_eaten      = p->cakes_eaten;
@@ -74,6 +78,10 @@ static void pack(save_t *b)
     b->egg_choice          = p->egg_choice;
     b->egg_hatch_ts        = p->egg_hatch_ts;
     b->bath_target_h       = p->bath_target_h;
+    b->depart_day          = p->depart_day;
+    b->depart_due_ts       = p->depart_due_ts;
+    b->depart_locked       = p->depart_locked;
+    b->stay_band           = p->stay_band;
     journal_store(b);
 
     b->bathroom  = (uint8_t)(p->bathroom + 0.5f);
@@ -148,6 +156,10 @@ static void unpack(const save_t *b)
     p->egg_choice         = b->egg_choice;
     p->egg_hatch_ts       = b->egg_hatch_ts;
     p->bath_target_h      = b->bath_target_h;
+    p->depart_day         = b->depart_day;
+    p->depart_due_ts      = b->depart_due_ts;
+    p->depart_locked      = b->depart_locked;
+    p->stay_band          = b->stay_band;
     journal_load(b);
 
     p->bathroom  = (float)b->bathroom;
@@ -220,7 +232,12 @@ load_result_t persist_load(void)
     }
     Serial.printf("SAVE load: %s\n", storage_load_result_str(r));
     if (r == LOAD_MIGRATED)
-        Serial.println("  schema 1 -> 2 migrated: bathroom and per-mess records added");
+        /* Which hop it was is not knowable here - storage.cpp has already
+         * rewritten the header to the current schema. Naming a specific pair
+         * was wrong from the moment a third schema existed, and it printed
+         * "schema 1 -> 2" for a v5 save. */
+        Serial.printf("  migrated forward to schema %u: new fields zeroed, "
+                      "nothing replayed\n", SAVE_SCHEMA_VERSION);
     return r;
 }
 

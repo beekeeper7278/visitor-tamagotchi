@@ -51,11 +51,12 @@ typedef struct {
     uint16_t stage_day[5];
 
     /* --- 8: care-history accumulators [SPEC section 3] ------------------
-     * Exponential moving averages with a 24 h half-life, sampled hourly.
-     * The half-life IS the recovery guarantee: two days of perfect care
-     * lifts a bottomed-out 20 to 80, and one bad day cannot drag a perfect
-     * 100 below 60. Evolution therefore reads recent care, not ancient
-     * mistakes. */
+     * Exponential moving averages sampled hourly, half-life
+     * ACCUM_HALFLIFE_HOURS (12 h since the 1/3/6-day lifecycle; it was 24 h).
+     * The half-life IS the recovery guarantee: two days of perfect care lifts
+     * a bottomed-out 20 to 95, and one bad day drops a perfect 100 to 40 -
+     * which twelve hours of good care clears back over 70. Evolution
+     * therefore reads recent care, not ancient mistakes. */
     float    care_happy, care_fed, care_clean, care_sleep, care_discipline;
     float    nutrition;              /* 100 x junk/meals; 0 is best        */
     float    acc_hours;              /* hours of sample accumulated        */
@@ -78,6 +79,15 @@ typedef struct {
     uint8_t  egg_choice;     /* what the player picked; 6 = Random        */
     float    bath_target_h;  /* awake hours for THIS cycle; persisted     */
     uint32_t egg_hatch_ts;   /* unix seconds when it hatches; 0 = not started */
+
+    /* --- the variable visit [PACING PASS] -------------------------------
+     * See farewell.h. depart_day is the PROJECTED departure in fractional
+     * age days; it is persisted, drift-limited and eventually frozen, so it
+     * is state rather than a derived value. */
+    float    depart_day;     /* 0 = not projected yet                      */
+    uint32_t depart_due_ts;  /* when it fell due; 0 = has not fallen due   */
+    uint8_t  depart_locked;  /* frozen inside VISIT_DEPART_LOCK_HOURS      */
+    uint8_t  stay_band;      /* 0 short 1 middle 2 long                    */
 } pet_state_t;
 
 void pet_init(void);

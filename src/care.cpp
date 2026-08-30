@@ -31,6 +31,7 @@
 #include "evolve.h"
 #include "discipline.h"
 #include "journal.h"
+#include "farewell.h"
 
 typedef enum { MESS_NONE = 0, MESS_FOOD, MESS_POOP } mess_type_t;
 
@@ -322,6 +323,12 @@ void care_advance(uint32_t dt_ms, const sim_ctx_t *ctx, sim_budget_t *b)
      * else, so an offline gap accumulates exactly as live time would. */
     evolve_accumulate(hours, ctx->asleep);
 
+    /* And so is the departure projection, for exactly the same reason: an
+     * absence must earn the same number of re-evaluations - and therefore the
+     * same amount of permitted drift - as the same span spent awake. This is
+     * the ONLY driver of the visit model; there is no offline-specific one. */
+    visit_advance(hours);
+
     /* --- bathroom ------------------------------------------------------
      * Rate is derived from a randomised per-stage TARGET (awake hours to
      * urgent), and slowed while asleep like every other rate. */
@@ -330,6 +337,24 @@ void care_advance(uint32_t dt_ms, const sim_ctx_t *ctx, sim_budget_t *b)
         const float to_urgent = BATHROOM_URGENT_PCT / p->bath_target_h;   /* %/h */
         const float mult = ctx->asleep ? BATHROOM_SLEEP_RATE : 1.0f;
         p->bathroom = clamp100(p->bathroom + to_urgent * mult * hours);
+
+        /* Once the offline accident allowance is spent the meter PARKS - it
+         * does not keep climbing. Without this, every later chunk pushed it
+         * back to 100 and it was re-parked, so the value the child actually
+         * came home to was wherever the final chunk happened to land:
+         * measured at 99 after an 8-day absence, not the documented 95. At 99
+         * the meter reaches 100 within minutes of boot, which quietly eats
+         * the grace window that OFFLINE_BATHROOM_PARK_PCT exists to protect. */
+        if (ctx->offline && b && b->accidents_left == 0 &&
+            p->bathroom > OFFLINE_BATHROOM_PARK_PCT) {
+            p->bathroom = OFFLINE_BATHROOM_PARK_PCT;
+            /* Flag it HERE as well. The park below used to be the only place
+             * that set this, and once the meter stops reaching 100 that
+             * branch never runs again - so the catch-up report would say "no
+             * caps reached" for an absence whose accident cap was the entire
+             * reason the Visitor came home at 95. */
+            b->cap_accident = true;
+        }
     }
 
     /* Offline accidents: AT MOST ONE per absence. Without this the pet
@@ -415,7 +440,22 @@ void care_tick(void)
         if (f != p->form_id) evolve_present(f, false);
         evolve_on_stage_entered(p->stage, p->days_alive);
         persist_mark_dirty("stage change");
+    } else if (p->stage == STAGE_ADULT && pet_age_days() >= visit_recheck_day()) {
+        /* The improvement-only glow-up. It used to live only in
+         * sim_catch_up(), which meant a device left switched ON never got it -
+         * the same fault the age clock had. Never regresses, so running it
+         * every tick is idempotent. */
+        const uint8_t f = evolve_midadult_recheck();
+        if (f != p->form_id) {
+            Serial.printf("EVOLVE: glow-up on day %.2f (re-check at %.2f)\n",
+                          (double)pet_age_days(), (double)visit_recheck_day());
+            evolve_present(f, false);
+            persist_mark_dirty("glow-up");
+        }
     }
+
+    /* Foreshadowing. Gated on the departure lock inside visit_tick(). */
+    visit_tick();
 
     /* --- sleep presentation ------------------------------------------
      * Bedtime is a visible event: walk to the middle, a bed appears, the
@@ -1074,8 +1114,28 @@ void care_report(void)
     Serial.println("=== CARE STATE ============================================");
     Serial.printf("  hunger %.0f  clean %.0f  happy %.0f  weight %.1f g (norm %.2f)\n",
                   p->hunger, p->cleanliness, p->happiness, p->weight_g, pet_weight_norm());
-    Serial.printf("  bathroom %.0f%%  %s\n", p->bathroom,
-                  p->bathroom >= BATHROOM_URGENT_PCT ? "URGENT" : "ok");
+    {
+        const char *tier = (p->bathroom >= BATH_TIER_URGENT_PCT)  ? "URGENT wiggle"
+                         : (p->bathroom >= BATH_TIER_OBVIOUS_PCT) ? "obvious + bubble"
+                         : (p->bathroom >= BATH_TIER_SUBTLE_PCT)  ? "subtle hold"
+                                                                  : "nothing";
+        const float rate = (p->bath_target_h > 0.0f)
+                         ? BATHROOM_URGENT_PCT / p->bath_target_h : 0.0f;
+        Serial.printf("  bathroom %.1f%%  tier %-16s %s\n", p->bathroom, tier,
+                      p->bathroom >= BATHROOM_URGENT_PCT ? "(past URGENT)" : "");
+        Serial.printf("    cycle target %.2f awake h -> %.1f %%/h awake, "
+                      "%.1f %%/h asleep (x%.2f)\n",
+                      (double)p->bath_target_h, (double)rate,
+                      (double)(rate * BATHROOM_SLEEP_RATE), (double)BATHROOM_SLEEP_RATE);
+        Serial.printf("    stage band %s   grace %lu s after %.0f%%\n",
+                      pet_stage_name(p->stage),
+                      (unsigned long)(BATHROOM_GRACE_MS / 1000),
+                      (double)BATHROOM_URGENT_PCT);
+        if (s_was_urgent)
+            Serial.printf("    urgent for %lu s of the %lu s grace window\n",
+                          (unsigned long)((millis() - s_urgent_since_ms) / 1000),
+                          (unsigned long)(BATHROOM_GRACE_MS / 1000));
+    }
     Serial.printf("  messes %u/%u   meals %u  cakes %u  accidents %u\n",
                   care_mess_count(), MESS_MAX, p->meals, p->cakes_eaten, p->accidents);
     for (uint8_t i = 0; i < MESS_MAX; i++) {

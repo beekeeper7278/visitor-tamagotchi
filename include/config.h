@@ -46,8 +46,63 @@
 
 #define HAPPINESS_DECAY_FLOOR   15.0f   /* [SPEC] never brutal */
 
-/* --- Time / visit [SPEC section 6] -------------------------------------- */
-#define VISIT_LENGTH_DAYS       21
+/* --- Time / visit [SPEC section 6] --------------------------------------
+ * VISIT_LENGTH_DAYS (a flat 21) IS GONE. The visit is no longer scheduled,
+ * it is EARNED: the Visitor leaves somewhere between day 9 and day 16 and
+ * where it lands inside that window is a function of how the stay actually
+ * went. See farewell.h for the whole model - this block is only the dial. */
+#define VISIT_DEPART_MIN_DAY     9.0f
+#define VISIT_DEPART_MAX_DAY    16.0f
+
+/* How far the projected date may MOVE at one re-evaluation. 0.15 days is
+ * 3.6 hours: enough that a day of good care is felt, far too little for one
+ * burger to buy a day. */
+#define VISIT_DEPART_MAX_DRIFT   0.15f
+
+/* Re-evaluation cadence, in SIMULATED Visitor-hours - so an offline gap gets
+ * exactly as many re-evaluations as the same time spent awake would, because
+ * both run through care_advance(). At 6 h that is 4 per day, so the date can
+ * travel at most 0.6 days/day: a full traverse of the 7-day window takes
+ * about twelve days of consistently changed behaviour. */
+#define VISIT_DEPART_EVAL_HOURS  6.0f
+
+/* Within this long of the projected date, the date FREEZES. Nothing after
+ * the lock can move it, so the goodbye a child has been told about is the
+ * goodbye they get. */
+#define VISIT_DEPART_LOCK_HOURS  36
+
+/* Foreshadowing starts here, and this MUST be smaller than the lock window
+ * above - a hint that could still be retracted is worse than no hint. */
+#define VISIT_HINT_HOURS         30
+#define VISIT_HINT_MIN_GAP_MS    (25UL * 60UL * 1000UL)  /* gentle, not nagging */
+
+/* A recalculation may never place departure in the past or inside this
+ * window. Care that collapses on the last day shortens nothing retroactively;
+ * there is always at least this much notice left. */
+#define VISIT_DEPART_MIN_NOTICE_H 6.0f
+
+/* How long a pending departure waits before it outranks everything else that
+ * could delay it. Past this a game, an open menu or a mischief window no
+ * longer buy time - but SLEEP STILL DOES, always. This is a priority
+ * escalation, not an override: the farewell is witnessed or it does not
+ * happen. See farewell.h §5. */
+#define VISIT_HOLD_MAX_HOURS     48
+
+/* Stay quality -> departure date. A straight linear map overshoots at the
+ * bottom and undershoots at the top (measured against the reference seeds),
+ * so the blended 0..100 stay score is passed through a logistic before it is
+ * spread across the 9..16 window. k is the steepness, x0 the centre; both
+ * were solved from the three existing care seeds and are checked by the
+ * calibration table the $ console command prints. */
+#define VISIT_STAY_CURVE_K       8.0f
+#define VISIT_STAY_CURVE_X0      0.628f
+
+/* Fraction of the ADULT stretch (adult start -> departure) at which the
+ * improvement-only form re-check happens. Replaces a hardcoded "day 18",
+ * which was a fixed fraction of the old fixed 21-day visit and is meaningless
+ * against a variable one. */
+#define VISIT_RECHECK_FRACTION   0.5f
+
 #define SIM_ELAPSED_CAP_SEC     (72L * 3600L)   /* stat decay cap */
 #define SIM_CHUNK_SEC           (15L * 60L)     /* 15-minute chunks */
 /* RESCALED 24 h -> 12 h for the 1/3/6-day lifecycle.
@@ -139,7 +194,13 @@
  * edge of any bottom-row swatch could land on START and begin the hatch.
  * Measured, not eyeballed: the numbers below keep a 26 px dead band between
  * the two hitboxes, and the constants are laid out so the gap can be checked
- * arithmetically rather than by looking at it. */
+ * arithmetically rather than by looking at it:
+ *     row1 bottom = EGG_SW_ROW1_Y + EGG_SW_H = 250 + 60 = 310
+ *     START top   = EGG_START_Y                        = 350
+ *     dead band   = 40 px          (it was -4 px, i.e. an OVERLAP)
+ * START bottom = 350 + 84 = 434, inside the 448 px panel with 14 px to
+ * spare. Row 0 of four is 4*80 + 3*10 = 350 px wide in a 368 px panel, so
+ * the outer margin is 9 px a side. */
 #define EGG_SW_W                80      /* was 74 */
 #define EGG_SW_H                60      /* was 52 */
 #define EGG_SW_ROW0_Y           180

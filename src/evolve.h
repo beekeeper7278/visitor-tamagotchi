@@ -3,10 +3,10 @@
  * evolve - care-history accumulators, personality, favourites  [MILESTONE 8]
  *
  * Evolution reads ACCUMULATED HISTORY, not the meters on screen right now.
- * The accumulators are EMAs with a 24-hour half-life, which is what makes
- * recovery mandatory and provable:
- *
- * At the 12 h half-life (rescaled for the 1/3/6-day lifecycle):
+ * The accumulators are EMAs whose half-life is what makes recovery mandatory
+ * and provable. It was 24 h when Baby lasted 3 days; the 1/3/6-day lifecycle
+ * rescaled it to 12 h (ACCUM_HALFLIFE_HOURS), and both guarantees below were
+ * recomputed for that value:
  *   two days of perfect care from a bottomed-out 20
  *       -> 100 - 80 * 2^(-48/12) = 95      (a top form is still reachable)
  *   one bad day from a perfect 100
@@ -44,12 +44,21 @@ void evolve_accumulate(float hours, bool asleep);
 
 evo_scores_t evolve_scores(void);
 
+/* The per-stage rate denominator evolve_scores() divides by. Exposed so the
+ * care-seeding test fixtures can invert it with the SAME expression rather
+ * than a hand-copied one - they had already drifted apart, and a fixture that
+ * silently produces half the engagement it claims corrupts every calibration
+ * figure derived from it. */
+float evolve_stage_days(void);
+
 /* Choose the form for a stage the Visitor is ENTERING. Pure given the
  * accumulators; never re-derived for a stage already recorded. */
 uint8_t evolve_pick_form(uint8_t stage);
 
-/* Improvement-only re-check at day 18 [SPEC section 3]. Returns the new form
- * or the current one; never regresses. */
+/* Improvement-only re-check partway through the Adult stretch [SPEC section
+ * 3]. The day is visit_recheck_day(), not a hardcoded 18: the visit is
+ * variable now, so a fixed day is a fixed fraction of nothing. Returns the
+ * new form or the current one; never regresses. */
 uint8_t evolve_midadult_recheck(void);
 
 void evolve_new_personality(void);

@@ -14,6 +14,7 @@
 #include "gamerec.h"
 #include "evolve.h"
 #include "visitrec.h"
+#include "farewell.h"
 
 #define VR_NS  "visitorv"
 #define VR_KEY "recs"
@@ -26,7 +27,7 @@ typedef struct __attribute__((packed)) {
 } vr_blob_t;
 
 #ifdef __cplusplus
-static_assert(sizeof(visit_rec_t) == 233, "visit record size changed - re-do the NVS sizing");
+static_assert(sizeof(visit_rec_t) == 327, "visit record size changed - re-do the NVS sizing");
 #endif
 
 static Preferences s_prefs;
@@ -109,7 +110,11 @@ bool visitrec_archive(const char *farewell)
     r->trait_b     = p->trait_b;
     r->arrived_ts  = p->hatch_ts;
     r->departed_ts = rtc_trusted() ? rtc_now() : 0;
-    r->days        = p->days_alive;
+    /* ROUNDED, not truncated. days_alive is a floor of the fractional age, so
+     * a 13.9-day visit used to be archived as 13 while the farewell note (and
+     * now the goodbye screen) said 13.9 - the record and the keepsake
+     * disagreeing about the same visit. */
+    r->days        = (uint16_t)(pet_age_days() + 0.5f);
     memcpy(r->evo_path, p->evo_path, sizeof(r->evo_path));
     r->fav_food    = evolve_favourite_food();
     r->fav_game    = gamerec_favorite();
@@ -130,6 +135,24 @@ bool visitrec_archive(const char *farewell)
     r->times_dirty      = p->times_dirty;
     r->disc_correct     = p->disc_correct;
     r->disc_ignored     = p->disc_ignored;
+
+    /* How the stay went, recorded rather than recomputed - see visitrec.h. */
+    {
+        const float q = visit_stay01();
+        r->care_band = (q < 0.25f) ? VISIT_CARE_POOR
+                     : (q < 0.55f) ? VISIT_CARE_AVERAGE
+                     : (q < 0.80f) ? VISIT_CARE_GOOD
+                                   : VISIT_CARE_EXCELLENT;
+
+        /* Thirds of the POSSIBLE window, not of the days lived: the question
+         * a record answers is "how long did this Visitor stay, out of how
+         * long it could have", and that needs the range in the denominator. */
+        const float span = VISIT_DEPART_MAX_DAY - VISIT_DEPART_MIN_DAY;
+        const float pos  = (pet_age_days() - VISIT_DEPART_MIN_DAY) / span;
+        r->length_band = (pos < 0.3333f) ? VISIT_LEN_SHORT
+                       : (pos < 0.6667f) ? VISIT_LEN_MIDDLE
+                                         : VISIT_LEN_LONG;
+    }
 
     if (farewell) {
         strncpy(r->farewell, farewell, FAREWELL_MAX - 1);
@@ -181,11 +204,30 @@ void visitrec_clear_all(void)
     Serial.println("VISITREC: all history cleared");
 }
 
+const char *visitrec_care_band_name(uint8_t b)
+{
+    switch (b) {
+        case VISIT_CARE_POOR:      return "poor";
+        case VISIT_CARE_AVERAGE:   return "average";
+        case VISIT_CARE_GOOD:      return "good";
+        default:                   return "excellent";
+    }
+}
+
+const char *visitrec_length_band_name(uint8_t b)
+{
+    switch (b) {
+        case VISIT_LEN_SHORT:  return "short";
+        case VISIT_LEN_MIDDLE: return "middle";
+        default:               return "long";
+    }
+}
+
 void visitrec_report(void)
 {
     Serial.println();
     Serial.println("=== VISIT RECORDS =========================================");
-    Serial.printf("  record %u B x %u kept = %u B on NVS (~11%% of usable)\n",
+    Serial.printf("  record %u B x %u kept = %u B on NVS (~16%% of usable)\n",
                   (unsigned)sizeof(visit_rec_t), VISIT_KEEP,
                   (unsigned)sizeof(vr_blob_t));
     if (!visitrec_count()) { Serial.println("  (none yet)"); }
@@ -196,6 +238,10 @@ void visitrec_report(void)
                       forms_name(r->final_form), evolve_trait_name(r->trait_a),
                       evolve_trait_name(r->trait_b), r->days,
                       evolve_food_name(r->fav_food), gamerec_name(r->fav_game));
+        Serial.printf("      care %s, %s stay (of a possible %.0f-%.0f days)\n",
+                      visitrec_care_band_name(r->care_band),
+                      visitrec_length_band_name(r->length_band),
+                      (double)VISIT_DEPART_MIN_DAY, (double)VISIT_DEPART_MAX_DAY);
         Serial.printf("      \"%s\"\n", r->farewell);
     }
     Serial.println("-----------------------------------------------------------");
