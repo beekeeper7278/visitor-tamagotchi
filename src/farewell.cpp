@@ -500,8 +500,11 @@ static void build_screen(void)
 
     const pet_state_t *p = pet_get();
     char sub[96];
-    snprintf(sub, sizeof(sub), "%s  -  %.1f days on Earth",
-             forms_name(p->form_id), (double)pet_age_days());
+    /* AGE, in the units the rest of the child-facing UI now uses: 1 real day
+     * = 1 Visitor year. "12.4 days on Earth" was a duration masquerading as
+     * an age on the one screen where the two are numerically identical. */
+    snprintf(sub, sizeof(sub), "%s  -  %d years old",
+             forms_long_name(p->form_id), (int)pet_age_days());
     lv_obj_t *sl = lv_label_create(s_scr);
     lv_label_set_text(sl, sub);
     lv_obj_set_style_text_color(sl, lv_color_hex(0x8890A0), 0);
@@ -547,6 +550,10 @@ void farewell_begin(void)
     s_active = true;
 
     ui_bubble_set_suppressed(true);
+    /* A held reaction from before the goodbye must never surface DURING or
+     * AFTER it - "Who turned out the sun?" landing on top of a farewell note
+     * would be the worst possible timing for a joke. */
+    ui_bubble_drop_deferred();
     ui_pet_set_wander(false);
     /* Nothing else may still own the screen once the goodbye starts. Past the
      * hold cap farewell_due() no longer waits for these, so it is here that a

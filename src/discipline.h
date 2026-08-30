@@ -29,6 +29,40 @@ typedef enum {
     MIS_COUNT
 } mischief_t;
 
+/* --- PHASE 9.5: frequency and memory ------------------------------------
+ * Two things changed, and they are separate ideas that happen to meet here.
+ *
+ * FREQUENCY is now STAGE-WEIGHTED: Kid most, Baby second, Teen third, Adult
+ * least (MISCHIEF_W_*). Babies used to be excluded entirely, which removed
+ * the whole mechanic from the first day of every single visit - the one day
+ * a child is most likely to be watching. What a Baby actually does is
+ * limited to the harmless kinds; see baby_safe() in the implementation.
+ *
+ * MEMORY is pet_state.learned_mischief, a rolling EMA over how windows were
+ * RESOLVED. Corrected pulls it toward 0, ignored pulls it toward 100. It
+ * feeds back into the roll, so early discipline genuinely calms a Teen and
+ * early neglect genuinely does not - but because it is an EMA and not a
+ * counter, nothing is ever locked in. A Visitor written off as a Kid can be
+ * brought round as a Teen. On a child's device that recoverability is not a
+ * nicety, it is the point.
+ *
+ * WHAT IS STILL NOT MISCONDUCT, unchanged and non-negotiable: hunger,
+ * tiredness, dirt, a bathroom accident caused by an ignored need, and
+ * refusing food when genuinely full. */
+
+/* 0..100 learned tendency, for the Journal and the console report. */
+float discipline_learned(void);
+
+/* Hold off the next spontaneous opportunity for `ms`. Used when the Visitor
+ * has just arrived and the screen belongs to something else - the hatch
+ * reveal, its first words, the return greeting. Mischief the player TRIGGERS
+ * is unaffected; this only paces the spontaneous roll. */
+void discipline_settle(uint32_t ms);
+
+/* The stage's share of the base rate, as a percentage. Exposed so the
+ * console can PRINT the ordering rather than asking anyone to trust it. */
+uint8_t discipline_stage_weight(uint8_t stage);
+
 void discipline_init(void);
 void discipline_tick(void);        /* 1 s: window expiry + spontaneous rolls */
 

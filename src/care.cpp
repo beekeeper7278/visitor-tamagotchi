@@ -32,6 +32,7 @@
 #include "discipline.h"
 #include "journal.h"
 #include "farewell.h"
+#include "dialogue.h"
 
 typedef enum { MESS_NONE = 0, MESS_FOOD, MESS_POOP } mess_type_t;
 
@@ -218,6 +219,20 @@ uint8_t care_mess_count(void)
     return n;
 }
 
+/* --- PHASE 9.5 runtime state (none of it persisted) ---------------------- */
+
+/* Which KIND of sleep is in progress. Needed at the wake transition: a night
+ * always produces a dream, an afternoon nap only sometimes, and the wake line
+ * itself differs. Reading the clock again at wake-up would be wrong - by then
+ * the sleep window has already ended. */
+static bool      s_sleep_was_nap;
+
+/* Old-accident comments, and the room light. Both are cooldown-gated rather
+ * than chance-gated alone: a joke you can trigger by flicking a switch stops
+ * being a joke. */
+static uint32_t  s_last_stink_ms;
+static uint32_t  s_last_light_react_ms;
+
 void care_init(lv_obj_t *room_layer)
 {
     s_room = room_layer;
@@ -226,6 +241,20 @@ void care_init(lv_obj_t *room_layer)
         s_mess[i].obj  = nullptr;
     }
     s_last_ms = millis();
+    /* The old-mess comment's cooldown anchor. It MUST be seeded with a real
+     * timestamp rather than left at 0.
+     *
+     * Zero is not "long ago" here - it is "time zero", and the gate is
+     * `millis() - s_last_stink_ms < POOP_COMMENT_GAP_MS`. For the first five
+     * minutes of every boot that comparison is true against a zero anchor,
+     * so the comment could never fire in that window. It happened to give a
+     * quiet period after switch-on, which is behaviour worth having, but by
+     * accident and for the wrong reason - and it made the trigger untestable
+     * because a probe that set the anchor to 0 was setting it FORWARD.
+     *
+     * Seeding it with millis() makes the same quiet period deliberate, and
+     * makes the arithmetic mean what it says everywhere else. */
+    s_last_stink_ms = s_last_ms;
     ui_pet_set_done_cb([](pet_anim_t a) {
         if (a != PET_ANIM_BATHROOM) return;
         s_bath_active = false;
@@ -240,6 +269,10 @@ static float clamp100(float v) { return v < 0.0f ? 0.0f : (v > 100.0f ? 100.0f :
 
 /* THE shared advance step - see care.h. Live ticks and offline catch-up
  * chunks both come through here. */
+/* Declared here because care_advance() drives the sleep period and both live
+ * further down with the rest of the sleep machinery. */
+static void care_close_sleep_period(void);
+
 void care_advance(uint32_t dt_ms, const sim_ctx_t *ctx, sim_budget_t *b)
 {
     if (dt_ms == 0) return;
@@ -319,6 +352,33 @@ void care_advance(uint32_t dt_ms, const sim_ctx_t *ctx, sim_budget_t *b)
     }
     p->cleanliness = clamp100(p->cleanliness - clean_take);
 
+    /* --- THE SLEEP PERIOD [PHASE 9.5] ---------------------------------
+     * Here, and only here, because this is the one path the live tick, the
+     * fast-forward hook and every offline chunk all run through. Sleep
+     * accumulated while the device was in a drawer therefore counts exactly
+     * as sleep accumulated in front of the child, and a period that spans
+     * both is still ONE period.
+     *
+     * Driven by ctx->sleep_window (the schedule), never by ctx->asleep (the
+     * Visitor's momentary state) - see sim.h for why conflating the two made
+     * one night produce two dreams. */
+    if (ctx->sleep_window) {
+        if (!(p->sleep_flags & SLEEPF_IN_PERIOD)) {
+            p->sleep_flags     = SLEEPF_IN_PERIOD | (ctx->nap ? SLEEPF_NAP : 0);
+            p->sleep_accum_sec = 0;
+            Serial.printf("SLEEP PERIOD: %s begins\n", ctx->nap ? "nap" : "night");
+        }
+        /* Saturating. A Visitor left in a drawer for a month must not wrap
+         * this counter around to "no sleep at all". */
+        const uint32_t add = dt_ms / 1000UL;
+        p->sleep_accum_sec = (p->sleep_accum_sec + add < p->sleep_accum_sec)
+                           ? 0xFFFFFFFFUL : p->sleep_accum_sec + add;
+    } else if (p->sleep_flags & SLEEPF_IN_PERIOD) {
+        /* The period just ENDED. Decide the dream from what was actually
+         * recorded, then close it. */
+        care_close_sleep_period();
+    }
+
     /* Care history is sampled from the SAME advance path as everything
      * else, so an offline gap accumulates exactly as live time would. */
     evolve_accumulate(hours, ctx->asleep);
@@ -394,6 +454,7 @@ static void build_bed(uint8_t stage);
 static bool sequence_busy(void);
 void care_new_bath_target(void);
 static void bed_hide(void);
+static bool maybe_comment_on_smell(void);
 static lv_obj_t *s_bed;
 static uint32_t  s_last_bright_complaint;
 static uint32_t  s_sleep_due_since;   /* when we first noticed it should sleep */
@@ -407,8 +468,14 @@ void care_tick(void)
     const uint32_t dt = now - s_last_ms;
     s_last_ms = now;
 
-    /* Live: no damage budget, and the sleep model supplies the context. */
-    sim_ctx_t ctx = { pet_get()->asleep, care_lights_on(), false };
+    /* Live: no damage budget, and the sleep model supplies the context.
+     * sleep_window comes from the CLOCK, not from p->asleep - so a boot in
+     * the middle of the night (which clears p->asleep) does not close the
+     * night and open a second one. */
+    bool live_nap = false;
+    const bool live_window = care_sleep_due_nap(&live_nap);
+    sim_ctx_t ctx = { pet_get()->asleep, care_lights_on(), false,
+                      live_window, live_nap };
     care_advance(dt, &ctx, nullptr);
 
     pet_state_t *p = pet_mutable();
@@ -479,6 +546,7 @@ void care_tick(void)
                     (now - s_sleep_due_since >= SLEEP_CATCHUP_MS);
 
                 p->asleep = true;
+                s_sleep_was_nap = nap;   /* the wake-up needs to know which */
                 ui_pet_set_wander(false);
                 build_bed(p->stage);
                 if (already_late) {
@@ -494,6 +562,7 @@ void care_tick(void)
                 scr_main_set_room_dark(!s_lights_on);
                 persist_mark_dirty("bedtime");
             } else if (!should_sleep && p->asleep) {
+                const bool was_nap = s_sleep_was_nap;
                 p->asleep = false;
                 /* Morning restores daytime automatically - lights back ON
                  * and full brightness, whatever the player left them at. */
@@ -501,7 +570,12 @@ void care_tick(void)
                 bed_hide();
                 ui_pet_set_wander(true);
                 ui_pet_play(PET_ANIM_HAPPY);        /* a little stretch */
-                ui_bubble_say(BUBBLE_T2_MOOD, "Morning!");
+                /* The dream is DECIDED when the sleep period closes, which
+                 * has already happened by the time we get here - it is
+                 * spoken below, out of pending_dream. This branch only
+                 * covers the mornings there was no dream to tell. */
+                if (!p->pending_dream)
+                    ui_bubble_say(BUBBLE_T2_MOOD, dialogue_wake(was_nap));
                 Serial.println("SLEEP: wake up - bed away, daytime restored");
                 persist_mark_dirty("woke up");
             }
@@ -523,6 +597,23 @@ void care_tick(void)
             }
         }
     }
+
+    /* A DREAM WAITING TO BE TOLD. Recorded when the sleep period closed -
+     * which may have been mid-absence, with no screen to say it to - and
+     * told now, once the Visitor is up. Deferred, so at boot it queues
+     * politely behind the return greeting rather than fighting it, and so a
+     * menu open at the wrong moment cannot swallow it. */
+    if (p->pending_dream) {
+        const uint8_t id = (uint8_t)(p->pending_dream - 1);
+        if (ui_bubble_say_deferred(BUBBLE_T2_MOOD, dialogue_dream_bubble(id)) ||
+            ui_bubble_deferred_count()) {
+            p->pending_dream = 0;
+            persist_mark_dirty("dream told");
+        }
+    }
+
+    /* Awake, and there is something old and smelly on the floor. */
+    maybe_comment_on_smell();
 
     /* TIERS. The holding pose now starts at 60%, well before the urgent
      * threshold, so escalation is visible long before anything is said. */
@@ -618,8 +709,7 @@ static void apply_feed(food_t f, feed_result_t r)
         }
         p->meals++;
         ui_pet_play(PET_ANIM_EATING);
-        ui_bubble_say(BUBBLE_T1_REACTION,
-                      f == FOOD_CAKE ? "Cake! Yesss." : (f == FOOD_BURGER ? "Yum!" : "Crunchy!"));
+        ui_bubble_say(BUBBLE_T1_REACTION, dialogue_food_yum((uint8_t)f));
         break;
 
     case FEED_PARTIAL:
@@ -628,7 +718,7 @@ static void apply_feed(food_t f, feed_result_t r)
         p->meals++;
         /* the leftover is placed by the sequence, at the food's location */
         ui_pet_play(PET_ANIM_EATING);
-        ui_bubble_say(BUBBLE_T1_REACTION, "I can't finish it all...");
+        ui_bubble_say(BUBBLE_T1_REACTION, dialogue_food_partial());
         break;
 
     default:    /* refused, and it ends up on the floor */
@@ -637,7 +727,7 @@ static void apply_feed(food_t f, feed_result_t r)
          * must never open a discipline window - that is the whole point of
          * the fair/unfair distinction. No call here on purpose. */
         ui_pet_play(PET_ANIM_REFUSE);
-        ui_bubble_say(BUBBLE_T1_REACTION, "No thanks, I'm stuffed!");
+        ui_bubble_say(BUBBLE_T1_REACTION, dialogue_food_refuse());
         break;
     }
 
@@ -657,7 +747,7 @@ static void apply_feed(food_t f, feed_result_t r)
 static bool is_egg_now(void)
 {
     if (pet_get()->stage != STAGE_EGG) return false;
-    ui_bubble_say(BUBBLE_T2_MOOD, "It's still an egg!");
+    ui_bubble_say_deferred(BUBBLE_T2_MOOD, "It's still an egg!");
     Serial.println("action ignored: still an egg");
     return true;
 }
@@ -795,7 +885,7 @@ void care_bathroom(void)
     if (s_bath_active) return;
 
     if (p->bathroom < BATHROOM_MIN_TO_GO_PCT) {
-        ui_bubble_say(BUBBLE_T1_REACTION, "I don't need to go!");
+        ui_bubble_say_deferred(BUBBLE_T1_REACTION, "I don't need to go!");
         Serial.printf("BATHROOM not needed (%.0f%%)\n", p->bathroom);
         return;
     }
@@ -900,7 +990,7 @@ void care_clean(void)
 
     if (n == 0) {
         s_cl_active = false;
-        ui_bubble_say(BUBBLE_T1_REACTION, "It's already clean!");
+        ui_bubble_say_deferred(BUBBLE_T1_REACTION, "It's already clean!");
     }
 }
 
@@ -1002,6 +1092,231 @@ void care_new_bath_target(void)
 bool care_lights_on(void)          { return s_lights_on; }
 void care_set_lights(bool on)      { s_lights_on = on; apply_lights_brightness(); }
 
+/* --- PHASE 9.5: the light switch as an INTERACTION ------------------------
+ * care_set_lights() is called from four places that are not the player: the
+ * save loader, the morning restore, care_reset() and the offline model. None
+ * of those should make the Visitor say anything, which is why the reaction
+ * lives in a separate entry point rather than inside the setter. Sniffing for
+ * "was this a real press?" inside care_set_lights() would have been one
+ * heuristic guarding four callers; this is none.
+ *
+ * Lights OFF does NOT put the Visitor to sleep, and nothing here touches the
+ * sleep model - bedtime is the clock's job and stays that way. It stays
+ * awake, in a dark room, and complains about it. */
+void care_player_toggle_lights(bool on)
+{
+    const bool was = s_lights_on;
+    care_set_lights(on);
+    if (was == on) return;
+
+    const pet_state_t *p = pet_get();
+    Serial.printf("LIGHTS %s (player)\n", on ? "ON" : "OFF");
+    if (p->stage == STAGE_EGG) return;      /* an egg has no opinion */
+    if (p->asleep) return;                  /* asleep: the sleep rules win */
+
+    const uint32_t now = millis();
+    if (now - s_last_light_react_ms < LIGHTS_REACT_GAP_MS) {
+        Serial.println("LIGHTS: reaction on cooldown - a flicked switch is not a conversation");
+        return;
+    }
+    /* The lights-ON line is optional; the lights-OFF one is not. Coming back
+     * to a lit room is pleasant but unremarkable, and always commenting on
+     * it makes the switch feel like a toy rather than part of the room. */
+    if (!on) {
+        s_last_light_react_ms = now;
+        ui_bubble_say_deferred(BUBBLE_T1_REACTION, dialogue_lights_off());
+    } else if ((int)random(0, 100) < LIGHTS_BACK_CHANCE_PCT) {
+        s_last_light_react_ms = now;
+        ui_bubble_say_deferred(BUBBLE_T1_REACTION, dialogue_lights_on());
+    }
+}
+
+/* --- PHASE 9.5: dreams ---------------------------------------------------
+ * Flavour only. Nothing here reads or writes a stat, an accumulator or the
+ * evolution path - the entire effect is one bubble and one line in the
+ * Journal. `defer` is for the offline path, where the return greeting owns
+ * the screen and the dream has to wait its turn. */
+bool care_dream(bool nap, bool defer)
+{
+    const pet_state_t *p = pet_get();
+    if (p->stage == STAGE_EGG) return false;
+
+    /* A night always produces a dream. A nap only sometimes does - that is
+     * what stops the Baby's afternoon doze becoming a fixture, and it is the
+     * difference a child actually notices. */
+    if (nap && (int)random(0, 100) >= DREAM_NAP_CHANCE_PCT) {
+        Serial.println("DREAM: no dream this nap");
+        return false;
+    }
+
+    const uint8_t id = dialogue_dream_pick(nap);
+    dialogue_dream_record(id);
+    persist_mark_dirty("dreamed");
+
+    Serial.printf("DREAM %u (%s): \"%s\"\n", id, nap ? "nap" : "night",
+                  dialogue_dream_bubble(id));
+    Serial.printf("  journal: %s\n", dialogue_dream_journal(id));
+
+    if (defer) ui_bubble_say_deferred(BUBBLE_T2_MOOD, dialogue_dream_bubble(id));
+    else       ui_bubble_say(BUBBLE_T2_MOOD, dialogue_dream_bubble(id));
+    return true;
+}
+
+void care_stink_probe(void)
+{
+    const pet_state_t *p = pet_get();
+    Serial.println();
+    Serial.println("=== OLD-MESS COMMENT PROBE ================================");
+    Serial.printf("  awake %s   sequence busy %s   bathroom run %s   stage %s\n",
+                  p->asleep ? "NO" : "yes", sequence_busy() ? "YES" : "no",
+                  s_bath_active ? "YES" : "no", pet_stage_name(p->stage));
+    uint8_t poops = 0, stinky = 0;
+    for (uint8_t i = 0; i < MESS_MAX; i++) {
+        if (s_mess[i].type == MESS_NONE) continue;
+        Serial.printf("  mess %u: %-8s age %lu s%s\n", i,
+                      s_mess[i].type == MESS_POOP ? "accident" : "food",
+                      (unsigned long)(s_mess[i].age_ms / 1000),
+                      s_mess[i].stinking ? "  STINKING" : "");
+        if (s_mess[i].type == MESS_POOP) {
+            poops++;
+            if (s_mess[i].stinking) stinky++;
+        }
+    }
+    Serial.printf("  %u accident(s) on the floor, %u past STINK_AFTER_MS (%lu s)\n",
+                  poops, stinky, (unsigned long)(STINK_AFTER_MS / 1000));
+    if (!stinky) {
+        Serial.println("  nothing has aged into its stink lines yet - correctly SILENT");
+        Serial.println("-----------------------------------------------------------");
+        return;
+    }
+    /* Ten runs of the REAL function with the cooldown cleared each time, so
+     * the result is a DISTRIBUTION rather than one sample of a 45% roll.
+     * Bubbles are suppressed for nine of them: the point is the decision,
+     * and ten bubbles in a row would just fight each other's cooldowns. */
+    Serial.printf("  running the REAL trigger x10 (expect roughly %d%% to speak):\n",
+                  POOP_COMMENT_CHANCE_PCT);
+    uint8_t spoke = 0;
+    for (uint8_t i = 0; i < 10; i++) {
+        /* Push the anchor a full gap into the PAST. Setting it to 0 was the
+         * bug that hid this: early in a boot, 0 is in the future relative to
+         * "one gap ago". */
+        s_last_stink_ms = millis() - POOP_COMMENT_GAP_MS - 1;
+        ui_bubble_set_suppressed(i < 9);
+        if (maybe_comment_on_smell()) spoke++;
+        ui_bubble_set_suppressed(false);
+    }
+    s_last_stink_ms = millis();     /* leave the real cooldown armed */
+    Serial.printf("  %u of 10 chose to comment\n", spoke);
+    Serial.println("-----------------------------------------------------------");
+}
+
+/* --- the dream RULES, demonstrated rather than asserted -------------------
+ * Constructs sleep periods with known recorded durations and runs the real
+ * close path over each, so every rule is checked against the shipping code
+ * rather than against a description of it. Restores the Visitor's own sleep
+ * state afterwards. */
+void care_dream_rules_probe(void)
+{
+    pet_state_t *p = pet_mutable();
+
+    /* snapshot - a test must not change the pet */
+    const uint32_t save_accum   = p->sleep_accum_sec;
+    const uint8_t  save_flags   = p->sleep_flags;
+    const uint8_t  save_pending = p->pending_dream;
+    const uint8_t  save_dream_n = p->dream_n;
+    uint8_t        save_ring[DREAM_KEEP];
+    memcpy(save_ring, p->dream_id, sizeof(save_ring));
+
+    Serial.println();
+    Serial.println("=== DREAM ELIGIBILITY RULES ===============================");
+    Serial.printf("  night needs %lu min of RECORDED sleep; nap needs %lu min\n",
+                  (unsigned long)(DREAM_MIN_NIGHT_SEC / 60),
+                  (unsigned long)(DREAM_MIN_NAP_SEC / 60));
+    Serial.printf("  a nap that is long enough then rolls %d%%\n", DREAM_NAP_CHANCE_PCT);
+    Serial.println();
+
+    struct { const char *name; bool nap; uint32_t secs; const char *expect; } CASE[] = {
+        { "night, 1 h slept",      false, 3600UL,        "NO dream (under 2 h)" },
+        { "night, 1h59m slept",    false, 7140UL,        "NO dream (just under)" },
+        { "night, 2 h slept",      false, 7200UL,        "dream (exactly at the line)" },
+        { "night, 9 h slept",      false, 9UL * 3600UL,  "dream" },
+        { "nap,   5 min slept",    true,  300UL,         "NO dream (under 20 min)" },
+        { "nap,  19 min slept",    true,  1140UL,        "NO dream (just under)" },
+    };
+    for (uint8_t i = 0; i < sizeof(CASE) / sizeof(CASE[0]); i++) {
+        p->sleep_flags     = SLEEPF_IN_PERIOD | (CASE[i].nap ? SLEEPF_NAP : 0);
+        p->sleep_accum_sec = CASE[i].secs;
+        p->pending_dream   = 0;
+        care_close_sleep_period();
+        Serial.printf("  %-18s -> %-8s   expected %s\n", CASE[i].name,
+                      p->pending_dream ? "DREAM" : "silent", CASE[i].expect);
+    }
+
+    /* A nap that IS long enough: a distribution, because it is a roll. */
+    uint8_t dreamt = 0;
+    for (uint8_t i = 0; i < 20; i++) {
+        p->sleep_flags     = SLEEPF_IN_PERIOD | SLEEPF_NAP;
+        p->sleep_accum_sec = 25UL * 60UL;
+        p->pending_dream   = 0;
+        care_close_sleep_period();
+        if (p->pending_dream) dreamt++;
+    }
+    Serial.printf("  nap, 25 min slept  -> %u of 20 dreamt (expect roughly %d%%)\n",
+                  dreamt, DREAM_NAP_CHANCE_PCT);
+
+    /* ONE PER PERIOD. Close a period that has already dreamt. */
+    p->sleep_flags     = SLEEPF_IN_PERIOD | SLEEPF_DREAMT;
+    p->sleep_accum_sec = 9UL * 3600UL;
+    p->pending_dream   = 0;
+    care_close_sleep_period();
+    Serial.printf("  9 h night, ALREADY dreamt -> %-8s   expected silent "
+                  "(one dream per period)\n", p->pending_dream ? "DREAM" : "silent");
+
+    /* restore */
+    p->sleep_accum_sec = save_accum;
+    p->sleep_flags     = save_flags;
+    p->pending_dream   = save_pending;
+    p->dream_n         = save_dream_n;
+    memcpy(p->dream_id, save_ring, sizeof(save_ring));
+    Serial.println("  (Visitor's own sleep state and dream ring restored)");
+    Serial.println("-----------------------------------------------------------");
+}
+
+/* --- PHASE 9.5: the smell ------------------------------------------------
+ * Gated on a mess that has ALREADY grown its stink lines, so the joke always
+ * refers to something on screen. Long cooldown plus a chance roll: this is a
+ * gag, and a gag on a one-minute timer is nagging. */
+/* Returns true when it decided to SPEAK - which is not the same as the
+ * bubble being shown, because the bubble manager still applies its own
+ * priority and cooldowns on top. The distinction matters for the probe: it
+ * measures this function's decision, not the bubble manager's. */
+static bool maybe_comment_on_smell(void)
+{
+    const pet_state_t *p = pet_get();
+    if (p->asleep || p->stage == STAGE_EGG) return false;
+    if (sequence_busy() || s_bath_active) return false;
+
+    bool stinks = false;
+    for (uint8_t i = 0; i < MESS_MAX; i++)
+        if (s_mess[i].type == MESS_POOP && s_mess[i].stinking) { stinks = true; break; }
+    if (!stinks) return false;
+
+    /* The cooldown runs between COMMENTS, not from the last time the floor
+     * was clean. An earlier version restarted the clock on every tick with
+     * nothing smelly, which pushed the first remark a full POOP_COMMENT_GAP_MS
+     * PAST the moment the stink lines appeared - eight minutes after the
+     * accident, by which time the joke has no referent on screen. Now the
+     * first one can land as the stink appears, and the gap only paces the
+     * ones after it. */
+    const uint32_t now = millis();
+    if (now - s_last_stink_ms < POOP_COMMENT_GAP_MS) return false;
+    s_last_stink_ms = now;
+    if ((int)random(0, 100) >= POOP_COMMENT_CHANCE_PCT) return false;
+
+    ui_bubble_say(BUBBLE_T2_MOOD, dialogue_stink());
+    return true;
+}
+
 /* --- persistence helpers -------------------------------------------------
  * Messes are saved and restored with their exact type, food, bitten state,
  * position and accumulated drain. A restored mess is the SAME mess, not a
@@ -1052,13 +1367,70 @@ uint8_t care_mess_snapshot(uint8_t idx, uint8_t *type, uint8_t *food,
  * but ANY of them finishing while the clock still says sleep must hand the
  * Visitor back to its bed. Without this it ends up asleep wherever the action
  * happened to leave it - on the floor, next to the food. */
-bool care_sleep_due(void)
+bool care_sleep_due_nap(bool *is_nap)
 {
+    if (is_nap) *is_nap = false;
     if (!rtc_trusted()) return false;
     rtc_time_t t;
     if (!rtc_read(&t)) return false;
     bool nap = false;
-    return sim_is_sleep_hour(t.hour, pet_get()->stage, &nap);
+    const bool due = sim_is_sleep_hour(t.hour, pet_get()->stage, &nap);
+    if (is_nap) *is_nap = nap;
+    return due;
+}
+
+bool care_sleep_due(void) { return care_sleep_due_nap(nullptr); }
+
+/* --- closing a sleep period, and the ONE dream it may produce ------------
+ * Called from care_advance() the moment the schedule leaves a sleep window,
+ * whether that moment is live or reconstructed from an absence. Everything
+ * it decides on is RECORDED history:
+ *
+ *   - how long the Visitor actually slept in THIS period, not whether the
+ *     clock happens to be inside a sleep window now;
+ *   - whether this period was a nap, decided when the period OPENED;
+ *   - whether this period has already had its dream.
+ *
+ * All three are persisted, so a power cut in the middle of a night cannot
+ * hand out a second dream for the same night.
+ *
+ * The dream is only RECORDED here. Speaking it is care_tick()'s job, because
+ * this runs inside the offline catch-up too and there is no screen to speak
+ * to at that point. */
+static void care_close_sleep_period(void)
+{
+    pet_state_t *p = pet_mutable();
+    const bool nap = (p->sleep_flags & SLEEPF_NAP) != 0;
+    const uint32_t slept = p->sleep_accum_sec;
+    const uint32_t need  = nap ? (uint32_t)DREAM_MIN_NAP_SEC
+                               : (uint32_t)DREAM_MIN_NIGHT_SEC;
+
+    Serial.printf("SLEEP PERIOD: %s ends after %lu min (needs %lu for a dream)\n",
+                  nap ? "nap" : "night", (unsigned long)(slept / 60),
+                  (unsigned long)(need / 60));
+
+    if (p->sleep_flags & SLEEPF_DREAMT) {
+        Serial.println("  already dreamt in this period - one per period, always");
+    } else if (slept < need) {
+        Serial.println("  not enough recorded sleep - no dream");
+    } else if (nap && (int)random(0, 100) >= DREAM_NAP_CHANCE_PCT) {
+        /* A nap that was long enough but simply did not dream. Marked so a
+         * later re-evaluation of the same nap cannot re-roll it. */
+        Serial.println("  nap was long enough, but no dream this time");
+        p->sleep_flags |= SLEEPF_DREAMT;
+    } else {
+        const uint8_t id = dialogue_dream_pick(nap);
+        dialogue_dream_record(id);
+        p->pending_dream = (uint8_t)(id + 1);
+        p->sleep_flags |= SLEEPF_DREAMT;
+        Serial.printf("  DREAM %u (%s): \"%s\"\n", id, nap ? "nap" : "night",
+                      dialogue_dream_bubble(id));
+        Serial.printf("    journal: %s\n", dialogue_dream_journal(id));
+    }
+
+    p->sleep_flags     = 0;      /* period closed */
+    p->sleep_accum_sec = 0;
+    persist_mark_dirty("sleep period ended");
 }
 
 void care_return_to_bed(void)
@@ -1089,6 +1461,10 @@ void care_reset(void)
     s_bath_active = false;
     s_was_urgent = false;
     s_last_ms = millis();
+    s_sleep_was_nap = false;
+    s_last_stink_ms = s_last_ms;
+    s_last_light_react_ms = 0;
+    ui_bubble_drop_deferred();   /* a new room owes nobody an old reaction */
     ui_pet_set_wander(true);
     ui_pet_set_urgency(0.0f);
     ui_pet_play(PET_ANIM_IDLE);
@@ -1102,7 +1478,10 @@ void care_fast_forward(uint32_t minutes)
      * periods and per-mess drain caps resolve exactly as they would in real
      * time. A single 6-hour dt would skip straight past the grace window. */
     Serial.printf("FAST FORWARD %lu min\n", (unsigned long)minutes);
-    sim_ctx_t ctx = { pet_get()->asleep, care_lights_on(), false };
+    bool ff_nap = false;
+    const bool ff_window = care_sleep_due_nap(&ff_nap);
+    sim_ctx_t ctx = { pet_get()->asleep, care_lights_on(), false,
+                      ff_window, ff_nap };
     for (uint32_t i = 0; i < minutes; i++) care_advance(60000UL, &ctx, nullptr);
     care_report();
 }

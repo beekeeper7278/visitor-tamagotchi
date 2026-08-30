@@ -56,10 +56,48 @@ void          care_clean(void);         /* removes ALL messes               */
 bool        care_lights_on(void);
 void        care_set_lights(bool on);
 
+/* THE PLAYER pressing the switch, as opposed to the loader, the morning
+ * restore or care_reset() setting it. Only this entry point produces a
+ * reaction, and the reaction is DEFERRED - the switch lives on the Care
+ * page, so the Visitor's answer has to survive until the menu closes.
+ * Lights off never puts the Visitor to sleep; bedtime remains the clock's. */
+void        care_player_toggle_lights(bool on);
+
+/* TEST ONLY: FORCE a dream, bypassing every eligibility rule.
+ *
+ * The real path is the sleep period in care_advance() - accumulated
+ * duration, one per period, persisted so reboots cannot duplicate. This
+ * exists so the dream TABLE and the bubble can be exercised on demand
+ * without waiting for a night, and it deliberately proves nothing about the
+ * rules. care_dream_rules_probe() is what tests those. */
+bool        care_dream(bool nap, bool defer);
+
+/* TEST ONLY: run the real eligibility logic against constructed sleep
+ * periods and report what each one decided - short night, long night, short
+ * nap, long nap (as a distribution), and a second close of a period that has
+ * already dreamt. Snapshots and restores the Visitor's own sleep state, so
+ * running it does not change the pet. */
+void        care_dream_rules_probe(void);
+
+/* TEST ONLY: report what the old-mess comment logic can actually see, then
+ * clear its cooldown and run the REAL trigger once.
+ *
+ * Sampling dialogue_stink() proves the line table and nothing else. What
+ * needs proving is the GATE - that a mess has genuinely aged into its stink
+ * lines, that the Visitor is awake and not mid-sequence, and that the
+ * automatic path therefore fires. With a five-minute cooldown and a 45% roll
+ * that is not observable by watching, so it gets a probe. */
+void        care_stink_probe(void);
+
 /* True when the clock says the Visitor should be asleep right now. Any
  * scripted action that finishes must consult this and put it back to bed. */
 void        care_new_bath_target(void);
 bool        care_sleep_due(void);
+
+/* The same question, plus whether the window is an afternoon NAP. The sleep
+ * period needs to know which kind it is at the moment it OPENS - deciding
+ * later, from the clock, would misread a nap that ran into the evening. */
+bool        care_sleep_due_nap(bool *is_nap);
 void        care_return_to_bed(void);
 bool        care_is_holding(void);      /* urgent -> renderer holding pose  */
 uint8_t     care_mess_count(void);

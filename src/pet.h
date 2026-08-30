@@ -17,6 +17,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -88,7 +89,53 @@ typedef struct {
     uint32_t depart_due_ts;  /* when it fell due; 0 = has not fallen due   */
     uint8_t  depart_locked;  /* frozen inside VISIT_DEPART_LOCK_HOURS      */
     uint8_t  stay_band;      /* 0 short 1 middle 2 long                    */
+
+    /* --- 9.5: identity, learned behaviour, dreams -----------------------
+     * gender is PRESENTATION ONLY and is held to exactly the same standing
+     * rule as egg_color: it must never reach an accumulator, a form choice,
+     * a care rate or a discipline roll. gender_choice records what the
+     * player picked (including GENDER_SURPRISE), gender the resolved value -
+     * resolved once at START and never rerolled. */
+    uint8_t  gender;         /* GENDER_BOY / GENDER_GIRL, resolved         */
+    uint8_t  gender_choice;  /* what the player picked; may be SURPRISE    */
+
+    /* Rolling, decayed record of how discipline windows were RESOLVED.
+     * 0 = every one corrected, 100 = every one ignored. Never locked: it is
+     * an EMA, so late good discipline still pulls it back down. */
+    float    learned_mischief;
+
+    /* The last DREAM_KEEP dreams, newest last, as indices into the dream
+     * table. Flavour only - nothing reads these except the Journal. */
+    uint8_t  dream_id[DREAM_KEEP];
+    uint8_t  dream_n;
+
+    /* --- THE SLEEP PERIOD, and why it is persisted ----------------------
+     * A dream is a property of a SLEEP PERIOD, not of a wake-up event. The
+     * first implementation dreamt on the awake<-asleep state transition,
+     * which got four things wrong at once: it never checked how long the
+     * Visitor had actually slept; a boot in the middle of the night and the
+     * real morning wake-up were two separate transitions, so one night could
+     * produce two dreams; a reboot restarted the bookkeeping; and "was
+     * asleep" is a momentary flag that scripted actions and the boot
+     * catch-up both clear.
+     *
+     * So the period is tracked explicitly and stored: how much sleep has
+     * ACTUALLY been accumulated in it, whether it is a nap, and whether it
+     * has already produced its one dream. All three survive a power cut,
+     * which is what makes "repeated reboots during the same night cannot
+     * generate a duplicate dream" true rather than merely likely.
+     *
+     * Accumulation happens in care_advance(), the one shared path, so an
+     * absence and a night spent awake at the device count identically. */
+    uint32_t sleep_accum_sec;   /* sleep recorded in the CURRENT period     */
+    uint8_t  sleep_flags;       /* SLEEPF_*                                 */
+    uint8_t  pending_dream;     /* 0 = none, else dream id + 1, not yet SAID */
 } pet_state_t;
+
+/* pet_state_t.sleep_flags */
+#define SLEEPF_IN_PERIOD  (1u << 0)   /* a sleep period is open             */
+#define SLEEPF_NAP        (1u << 1)   /* ...and it is a nap, not a night    */
+#define SLEEPF_DREAMT     (1u << 2)   /* ...and it has had its one dream    */
 
 void pet_init(void);
 const pet_state_t *pet_get(void);
@@ -105,6 +152,31 @@ float pet_weight_norm(void);
  * Baby to Teen records both transitions rather than jumping silently. The
  * stage only; the FORM is Phase 8. Returns the number of transitions made. */
 uint8_t pet_apply_stage_for_day(float day);
+
+/* Record the CURRENT form against the CURRENT stage in evo_path[].
+ *
+ * evo_path[] is the "How I grew up" history, and it used to be written from
+ * exactly one place - sim_catch_up() - with an index expression that also
+ * excluded the Adult slot (`if (p->stage < 4)`). The two faults compounded:
+ * a device left switched on recorded NOTHING, because live evolution runs in
+ * care_tick(), and even an offline evolution could never record the final
+ * adult form. The Journal then had nothing to print but the hardcoded "Baby".
+ *
+ * One function, called from every path that can change stage or form, fixes
+ * both. Writing the same form to the same slot twice is a no-op, so it is
+ * safe to call from the live tick, the offline catch-up, the mid-adult
+ * re-check and the load-time backfill alike - which is what "no duplicate
+ * stages" means in practice.
+ *
+ *   evo_path[0] = Baby, [1] = Kid, [2] = Teen, [3] = Adult. */
+void pet_record_form(void);
+
+/* Fill in any evo_path slot the Visitor has clearly already lived through
+ * but which is still blank - a save written before pet_record_form() existed,
+ * or migrated up from an older schema. Only fills BLANKS; a recorded form is
+ * the Visitor's actual past and is never overwritten. Returns how many slots
+ * it filled. */
+uint8_t pet_backfill_evo_path(void);
 
 /* AGE IS DERIVED FROM THE CLOCK, never accumulated.
  *

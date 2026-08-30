@@ -197,6 +197,11 @@ void evolve_on_stage_entered(uint8_t stage, uint16_t day)
     p->disc_correct     = 0;
     p->disc_unfair      = 0;
     p->stage_start_day  = day;
+    /* A stage can be entered WITHOUT the form changing - the offline path
+     * assigns form_id directly, and a re-check that picks the same form
+     * never calls evolve_present() at all. Recording here as well means the
+     * slot is right in every case, and a repeat write is a no-op. */
+    pet_record_form();
     (void)stage;
 }
 
@@ -277,6 +282,9 @@ void evolve_present(uint8_t new_form, bool announce_only)
 
     if (!announce_only) p->form_id = new_form;
     p->evo_announce = 0;
+    /* The history is written HERE, at the one point every live form change
+     * passes through, rather than at each of the four call sites. */
+    pet_record_form();
 
     ui_pet_set_done_cb(evo_done_cb);
     ui_pet_evolve_to(new_form);

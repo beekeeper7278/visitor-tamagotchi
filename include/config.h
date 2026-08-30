@@ -153,10 +153,16 @@
 
 /* Spontaneous mischief. Frequency scales with the hidden tendency and falls
  * as discipline rises, so a well-raised Visitor genuinely misbehaves less.
- * Kept uncommon on purpose: mischief should be a treat, not a chore. */
-#define MISCHIEF_CHECK_MS       30000UL  /* how often a roll happens        */
-#define MISCHIEF_BASE_PCT       6        /* % chance at the check           */
-#define MISCHIEF_MIN_GAP_MS     180000UL /* never twice inside 3 minutes    */
+ *
+ * SUPERSEDED BY PHASE 9.5. These three are the pre-9.5 values and are no
+ * longer read by anything: the roll is now stage-weighted and history-aware
+ * (MISCHIEF_CHECK_FAST_MS / MISCHIEF_BASE_PCT_9_5 / the MISCHIEF_GAP_* pair,
+ * all in the 9.5 block at the end of this file). They are kept only so the
+ * old numbers are still legible next to the new ones - delete them once
+ * nobody needs to compare. */
+#define MISCHIEF_CHECK_MS       30000UL  /* superseded: was the roll cadence */
+#define MISCHIEF_BASE_PCT       6        /* superseded: was the flat % chance */
+#define MISCHIEF_MIN_GAP_MS     180000UL /* superseded: was a FIXED 3 min gap */
 
 /* RTC plausibility bounds [SPEC section 6] */
 #define RTC_MIN_VALID_TS        1704067200UL    /* 2024-01-01 00:00:00 */
@@ -189,25 +195,10 @@
 #define EGG_HATCH_SEC           300     /* five minutes                    */
 #define EGG_PALETTE_COUNT       6
 
-/* Egg selector geometry. The bottom row's touch box previously OVERLAPPED
- * START by 4 px (row1 296..348, START 344..428) - so a tap near the lower
- * edge of any bottom-row swatch could land on START and begin the hatch.
- * Measured, not eyeballed: the numbers below keep a 26 px dead band between
- * the two hitboxes, and the constants are laid out so the gap can be checked
- * arithmetically rather than by looking at it:
- *     row1 bottom = EGG_SW_ROW1_Y + EGG_SW_H = 250 + 60 = 310
- *     START top   = EGG_START_Y                        = 350
- *     dead band   = 40 px          (it was -4 px, i.e. an OVERLAP)
- * START bottom = 350 + 84 = 434, inside the 448 px panel with 14 px to
- * spare. Row 0 of four is 4*80 + 3*10 = 350 px wide in a 368 px panel, so
- * the outer margin is 9 px a side. */
-#define EGG_SW_W                80      /* was 74 */
-#define EGG_SW_H                60      /* was 52 */
-#define EGG_SW_ROW0_Y           180
-#define EGG_SW_ROW1_Y           250     /* 250 + 60 = 310                  */
-#define EGG_START_Y             350     /* 350 - 310 = 40 px of dead space */
-#define EGG_START_H             84
-#define EGG_SW_GAP_X            10
+/* Egg selector geometry lives in the PHASE 9.5 block at the end of this
+ * file: the pre-hatch screen gained a gender row, so the whole layout was
+ * re-derived rather than squeezed. Only the shell's own spot count stays
+ * here, because it is a property of the drawing and not of the picker. */
 #define EGG_DOTS                7
 
 /* Freshly hatched: hungry and wanting attention, but in a clean room. The
@@ -572,3 +563,189 @@
 /* --- Diagnostics --------------------------------------------------------- */
 #define DIAG_FPS_SAMPLE_FRAMES  30
 #define DIAG_IMU_PRINT_HZ       10
+
+/* =========================================================================
+ * PHASE 9.5 - personality, dreams, identity, refinement
+ * ====================================================================== */
+
+/* --- Age copy -----------------------------------------------------------
+ * 1 real day = 1 Visitor year, and the CHILD-FACING copy now says so. The
+ * diagnostics keep printing day numbers - a developer needs the raw figure -
+ * but "day 6" on the Stats page told a five-year-old nothing, where "6 years
+ * old" is immediately legible and matches the stage boundaries exactly
+ * (Kid at 1, Teen at 3, Adult at 6). There is no second clock here: the
+ * displayed age IS days_alive, relabelled. */
+#define AGE_YEARS_PER_DAY       1
+
+/* --- Identity: gender ---------------------------------------------------
+ * PRESENTATION ONLY. Gender must never reach an accumulator, a form choice,
+ * a care rate or a discipline rule - the same standing rule the egg colour
+ * has lived under since Phase 9. It exists so a child can say "she" or "he"
+ * about their Visitor, and for nothing else. Surprise resolves ONCE at START
+ * and is persisted immediately, exactly like the colour. */
+#define GENDER_BOY              0
+#define GENDER_GIRL             1
+#define GENDER_SURPRISE         2       /* the CHOICE only; never resolved  */
+
+/* Palette index EGG_PALETTE_COUNT is the rainbow "Surprise" shell. It is a
+ * display value, never a stored colour: egg_color always holds a REAL
+ * palette index, and the rainbow is selected from egg_choice so the resolved
+ * colour stays hidden right up to the hatch. */
+#define EGG_PAL_RAINBOW         EGG_PALETTE_COUNT
+
+/* Pre-hatch reveal, then the first thing the Visitor ever says. Deliberately
+ * sequential and not overlapping: the reveal owns the screen, the greeting
+ * follows it. */
+#define HATCH_REVEAL_MS         3200UL
+#define HATCH_GREET_DELAY_MS    900UL   /* after the reveal clears          */
+
+/* --- Deferred reactions --------------------------------------------------
+ * A reaction the player is SUPPOSED to see must not be spoken to a closed
+ * menu. Queue it, then show it once the pet screen is back - and start its
+ * timer THEN, not when it was queued. Bounded hard: three slots, oldest
+ * dropped, and anything that has waited longer than the hold is discarded
+ * rather than surfacing minutes late and out of context. */
+#define BUBBLE_DEFER_SLOTS      3
+#define BUBBLE_DEFER_TEXT_MAX   80
+#define BUBBLE_DEFER_HOLD_MS    120000UL
+
+/* The no-repeat history OWNS ITS STRINGS. It used to keep bare pointers,
+ * which was safe only while every line was a string literal - and the
+ * deferred queue broke that assumption the moment it existed. See
+ * recently_said() in ui_bubble.cpp for the failure it caused. 5 x 96 bytes
+ * of static RAM is a trivial price for removing the whole class. */
+#define BUBBLE_RECENT_TEXT_MAX  96
+
+/* --- Dreams -------------------------------------------------------------
+ * Flavour only. A dream never touches a stat, an accumulator or the
+ * evolution path. Night sleep always produces one; a Baby's afternoon nap
+ * sometimes does, which is what makes the nap dream feel like a find rather
+ * than a fixture. */
+#define DREAM_NAP_CHANCE_PCT    35
+#define DREAM_KEEP              3       /* recent dreams retained for the Journal */
+
+/* MINIMUM RECORDED SLEEP before a period is eligible to have been dreamt in.
+ * Both are durations of sleep ACTUALLY ACCUMULATED, not "is the clock inside
+ * a sleep window" - see the sleep-period block in care.cpp for why that
+ * distinction is the whole mechanism. Configurable; nothing hardcodes them. */
+#define DREAM_MIN_NIGHT_SEC     (2L * 3600L)    /* a night: two hours       */
+#define DREAM_MIN_NAP_SEC       (20L * 60L)     /* a Baby's nap: 20 minutes */
+
+/* Why these thresholds. A 96-second reboot at half past eight in the evening
+ * used to produce a dream, so switching the device off and on again got you
+ * one every time and the mechanic stopped being a morning surprise. Two
+ * hours is roughly a quarter of a night: long enough that the Visitor
+ * plausibly dreamt, short enough that a genuine evening absence still
+ * counts. Twenty minutes is the same judgement for an afternoon nap, which
+ * only runs for an hour in the first place. */
+
+/* --- Lights reactions ---------------------------------------------------
+ * Switching the room light off while the Visitor is AWAKE does not put it to
+ * sleep - sleep is the clock's job and always has been. It gets a joke
+ * instead. Cooldowns stop a child flicking the switch from turning it into a
+ * chatterbox. */
+#define LIGHTS_REACT_GAP_MS     20000UL
+#define LIGHTS_BACK_CHANCE_PCT  70      /* the lights-ON line is optional   */
+
+/* --- Old-mess comments --------------------------------------------------
+ * Only once a poop has aged past STINK_AFTER_MS and grown its stink lines,
+ * so the comment always refers to something visible on screen. LONG cooldown
+ * on purpose: this is a gag, and a gag repeated every minute is nagging. */
+#define POOP_COMMENT_GAP_MS     300000UL   /* five minutes, minimum         */
+#define POOP_COMMENT_CHANCE_PCT 45         /* rolled once per gap           */
+
+/* --- Discipline opportunities [PHASE 9.5] -------------------------------
+ * Spontaneous mischief is now STAGE-WEIGHTED and HISTORY-AWARE.
+ *
+ * Baseline frequency, by design: Kid most, Baby second, Teen third, Adult
+ * least. A Kid is the stage where correcting behaviour is the game; a Baby
+ * is naughty in a harmless, funny way; a Teen and an Adult have mostly
+ * learned better. The weights below are percentages applied to the base roll.
+ *
+ * BABIES ARE NO LONGER BLAMELESS. They used to be excluded entirely, which
+ * removed the whole mechanic from the first day of every visit. What a Baby
+ * does is deliberately limited to the harmless kinds - dropped food, a small
+ * deliberate mess, bedtime silliness - and never anything that reads as a
+ * real fault.
+ *
+ * Unavoidable needs are STILL never misconduct. Nothing here changes that
+ * rule: hunger, tiredness, dirt, a genuine bathroom accident and refusing
+ * food when actually full remain outside discipline entirely. */
+#define MISCHIEF_W_BABY         85      /* second most                      */
+#define MISCHIEF_W_KID          100     /* most                             */
+#define MISCHIEF_W_TEEN         62      /* third                            */
+#define MISCHIEF_W_ADULT        40      /* least                            */
+
+#define MISCHIEF_CHECK_FAST_MS  15000UL /* roll cadence (was 30 s)          */
+#define MISCHIEF_BASE_PCT_9_5   14      /* % per roll before weighting      */
+
+/* Randomised gap between opportunities. A naturally mischievous Visitor in
+ * active play lands roughly one every 1-3 minutes; a calm one is far rarer
+ * because the roll itself keeps failing, not because the gap is longer. */
+#define MISCHIEF_GAP_MIN_MS     60000UL
+#define MISCHIEF_GAP_MAX_MS     180000UL
+
+/* SETTLING-IN HOLDS. A Visitor that has just arrived must not misbehave
+ * before it has finished arriving.
+ *
+ * Observed on hardware: a Baby hatched, the "It's a boy!" reveal appeared,
+ * and a mischief bubble ("Look what I made!") took the screen DURING it -
+ * pushing the Visitor's own first words into the deferred queue. The first
+ * thing that ever happened to that Visitor was a discipline window, before
+ * it had said hello. discipline_init() leaves s_last_mis_ms at 0, so the
+ * very first roll after any fresh start is eligible.
+ *
+ * The hatch hold covers the reveal, the greeting and a moment to breathe.
+ * The boot hold is shorter and exists for the same reason at a smaller
+ * scale: the return greeting and any post-absence dream should not be
+ * elbowed aside fifteen seconds after switch-on. */
+#define MISCHIEF_SETTLE_HATCH_MS 120000UL
+#define MISCHIEF_SETTLE_BOOT_MS   60000UL
+
+/* LEARNED BEHAVIOUR. A rolling EMA over how discipline windows were actually
+ * resolved: corrected pulls it toward 0, ignored pulls it toward 100. It
+ * starts neutral, decays with every new event, and is NEVER locked - a
+ * Visitor raised badly as a Kid can still be brought round as a Teen, and a
+ * perfectly-raised Kid whose Teen years are ignored will drift back. That
+ * recoverability is the whole point; a permanent penalty for a bad first day
+ * would be the wrong lesson on a child's device. */
+#define LEARN_START             50.0f
+#define LEARN_ALPHA             0.22f   /* per resolved window              */
+#define LEARN_WEIGHT_PCT        60      /* how much it moves the roll, %    */
+
+/* --- Pre-hatch selector geometry [PHASE 9.5] ----------------------------
+ * The layout now carries a gender row as well as seven colours, so it was
+ * re-derived from scratch rather than squeezed. Every gap below is stated as
+ * arithmetic so it can be CHECKED rather than eyeballed - the last selector
+ * bug here was a -4 px overlap that looked fine:
+ *
+ *   egg preview   root y = EGG_ROOT_Y (-6); the shell spans  30 .. 148
+ *   colour row 0  156 .. 208      (4 swatches, 80 x 52)
+ *   colour row 1  214 .. 266      (3 swatches: teal, yellow, Surprise)
+ *   gap                            266 -> 292 = 26 px
+ *   gender row    292 .. 344      (3 buttons, 108 x 52)
+ *   DEAD SPACE                     344 -> 370 = 26 px   (spec wants >= 20-24)
+ *   START         370 .. 442      (72 tall, 6 px clear of the 448 panel)
+ *
+ * Row 0 is 4*80 + 3*10 = 350 px in a 368 px panel: 9 px a side.
+ * The gender row is 3*108 + 2*12 = 348 px: 10 px a side.
+ *
+ * A touch that BEGINS on a selector can never end on START, because the two
+ * hitboxes are 26 px apart and LVGL delivers CLICKED to the object the press
+ * started on. Both conditions matter; the gap alone was not the old bug. */
+#define EGG_ROOT_Y              (-6)
+#define EGG_SW_W                80
+#define EGG_SW_H                52
+#define EGG_SW_GAP_X            10
+#define EGG_SW_ROW0_Y           156
+#define EGG_SW_ROW1_Y           214
+#define EGG_GENDER_W            108
+#define EGG_GENDER_H            52
+#define EGG_GENDER_GAP_X        12
+#define EGG_GENDER_Y            292
+#define EGG_START_Y             370
+#define EGG_START_H             72
+
+/* The two gaps, named so a build can assert them. */
+#define EGG_GENDER_GAP_ABOVE    (EGG_GENDER_Y - (EGG_SW_ROW1_Y + EGG_SW_H))
+#define EGG_START_DEAD_BAND     (EGG_START_Y - (EGG_GENDER_Y + EGG_GENDER_H))

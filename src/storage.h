@@ -33,7 +33,7 @@ extern "C" {
  * The shadow copy used for write suppression lives in RAM, not NVS. */
 #define SAVE_SIZE_BUDGET 448
 
-#define SAVE_SCHEMA_VERSION 6
+#define SAVE_SCHEMA_VERSION 8
 
 /* Journal entry classes - see design doc section 11 */
 enum { JRN_MILESTONE = 0, JRN_RECORD = 1, JRN_FLAVOUR = 2 };
@@ -160,6 +160,36 @@ typedef struct __attribute__((packed)) {
     uint32_t depart_due_ts;   /* unix seconds when it fell due; 0 = not yet  */
     uint8_t  depart_locked;   /* 1 once inside VISIT_DEPART_LOCK_HOURS       */
     uint8_t  stay_band;       /* 0 short 1 middle 2 long, resolved on depart */
+
+    /* --- schema 7: identity, learned behaviour, dreams --------------------
+     * gender_choice is what the player PICKED (it may be GENDER_SURPRISE);
+     * gender is the RESOLVED value. Both are stored because the Journal has
+     * to know whether the "It's a boy!" reveal was ever a surprise, and
+     * because the pre-hatch selector has to redraw the player's own choice
+     * after a power cut rather than showing them a resolved answer they were
+     * not meant to see yet. Resolution happens once, at START.
+     *
+     * learned_mischief is the rolling discipline-response EMA. It is
+     * persisted rather than recomputed because the whole point is that it
+     * spans stages: a Kid's discipline history has to still be legible when
+     * that Visitor is a Teen, and re-deriving it from disc_ignored /
+     * disc_opportunities would lose the DECAY - a Visitor with a bad first
+     * day and a perfect week would read the same as one with the reverse. */
+    uint8_t  gender;
+    uint8_t  gender_choice;
+    float    learned_mischief;
+    uint8_t  dream_id[3];     /* recent dreams, indices into the table       */
+    uint8_t  dream_n;
+
+    /* --- schema 8: the sleep period ---------------------------------------
+     * Persisted so that repeated reboots during ONE night cannot each
+     * produce a dream. Recomputing this at boot is not an option: the
+     * accumulated duration and the already-dreamt flag ARE the history, and
+     * "is the clock inside a sleep window right now" cannot reconstruct
+     * either of them. See pet.h for the four faults this replaced. */
+    uint32_t sleep_accum_sec;
+    uint8_t  sleep_flags;
+    uint8_t  pending_dream;
 } save_t;
 
 #define SAVE_V3_SIZE 397
@@ -176,15 +206,30 @@ typedef struct __attribute__((packed)) {
  *     v5 407  = 403 +  4   (bath_target_h)
  *     v6 417  = 407 + 10   (depart_day, depart_due_ts, depart_locked,
  *                           stay_band)
- * 417 of a 448 budget leaves 31 bytes of headroom. Getting one of these
- * wrong rejects every save of that version as corrupt - it has happened
- * once already - so recheck the arithmetic if you add a schema. */
+ *     v7 427  = 417 + 10   (gender, gender_choice, learned_mischief,
+ *                           dream_id[3], dream_n)
+ *     v8 433  = 427 +  6   (sleep_accum_sec, sleep_flags, pending_dream)
+ * 433 of a 448 budget leaves 15 bytes of headroom - still enough for the
+ * Phase 10 volume / tilt / gravity settings, which are the only additions
+ * currently foreseen. Getting one of these wrong rejects every save of that
+ * version as corrupt - it has happened once already - so recheck the
+ * arithmetic if you add a schema. */
 #define SAVE_V4_SIZE 403   /* schema 4 adds egg_choice; see the migration */          /* frozen: sizeof(save_t) at schema 3    */
 #define SAVE_V5_SIZE 407   /* frozen: sizeof(save_t) at schema 5          */
+#define SAVE_V6_SIZE 417   /* frozen: sizeof(save_t) at schema 6          */
+#define SAVE_V7_SIZE 427   /* frozen: sizeof(save_t) at schema 7          */
 
 /* Fail the BUILD rather than discover an over-budget blob on hardware. */
 #ifdef __cplusplus
 static_assert(sizeof(save_t) <= SAVE_SIZE_BUDGET, "save_t exceeds its NVS budget");
+/* The migration chain is "copy the old blob, zero the tail", which is only
+ * valid while every schema APPENDS. Proving the arithmetic at build time is
+ * cheaper than discovering on hardware that every v6 save reads as corrupt -
+ * which is exactly how the SAVE_V4_SIZE mistake was found. */
+static_assert(sizeof(save_t) == SAVE_V7_SIZE + 6,
+              "schema 8 must append exactly 6 bytes to schema 7");
+static_assert(SAVE_V7_SIZE == SAVE_V6_SIZE + 10,
+              "schema 7 appended exactly 10 bytes to schema 6");
 #endif
 
 #define SAVE_V2_SIZE 363          /* frozen: sizeof(save_t) at schema 2    */
@@ -220,6 +265,19 @@ bool storage_write_fake_v1(float hunger, float weight_g, uint16_t days);
  * departure floor. A migration that has never been RUN is a guess, and this
  * is the one that had never been run. */
 bool storage_write_fake_v5(uint32_t hatch_ts, float hunger, float care_happy,
+                           uint8_t form_id, uint8_t trait_a, uint8_t trait_b);
+
+/* TEST ONLY: the same fixture one schema later, for the v6 -> v7 hop. It
+ * carries a LOCKED departure projection as well as the accumulators, the
+ * personality and the evolution path, because "the pacing state survives the
+ * migration" is the specific claim this hop has to prove. */
+bool storage_write_fake_v6(uint32_t hatch_ts, float hunger, float care_happy,
+                           uint8_t form_id, uint8_t trait_a, uint8_t trait_b);
+
+/* TEST ONLY: the v7 -> v8 hop, the one the sleep-period fields added. Carries
+ * the whole schema-7 tail (resolved Surprise identity, learned behaviour, a
+ * dream ring) so "Phase 9.5 state survives" is proven rather than assumed. */
+bool storage_write_fake_v7(uint32_t hatch_ts, float hunger, float care_happy,
                            uint8_t form_id, uint8_t trait_a, uint8_t trait_b);
 uint32_t storage_write_count(void);      /* writes since boot */
 uint32_t storage_skipped_count(void);    /* shadow-compare hits */

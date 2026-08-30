@@ -35,6 +35,18 @@ lv_obj_t *scr_main_room(void);      /* room_layer - mess sprites live here */
 void      scr_main_hud_refresh(void);
 void      scr_main_egg_refresh(void);   /* egg UI + hatch countdown */
 
+/* START, as one implementation. Resolves both Surprise choices, persists
+ * them immediately with a forced save, and arms the hatch timer `secs` from
+ * now. The START button passes EGG_HATCH_SEC; the console test command
+ * passes 10.
+ *
+ * It is shared BECAUSE the console used to set egg_hatch_ts directly, which
+ * skipped the resolution entirely - so the one command anyone would reach
+ * for to test the hatch was exercising a path the product does not have, and
+ * produced an egg whose identity had never been resolved. A test that drives
+ * a different code path from the button proves nothing about the button. */
+void      scr_main_egg_start(uint32_t secs);
+
 /* Virtual room darkness. Dims the pet scene ONLY - never the menus, and
  * never the sleeping Zs, which are drawn above it. */
 void      scr_main_set_room_dark(bool dark);

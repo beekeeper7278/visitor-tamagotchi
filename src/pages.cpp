@@ -20,6 +20,8 @@
 #include "visitrec.h"
 #include "rtc.h"
 #include "gamerec.h"
+#include "dialogue.h"
+#include "discipline.h"
 
 /* --- shared page furniture ---------------------------------------------- */
 
@@ -146,7 +148,9 @@ static void build_stats(lv_obj_t *p)
     stat_bar(p, "Cleanliness", s->cleanliness, 0x9E86E8, 278);
 
     lv_obj_t *l = lv_label_create(p);
-    lv_label_set_text_fmt(l, "%s   -   day %d   -   %d g\nfeeling %s",
+    /* 1 real day = 1 Visitor year - see the Settings page for why the
+     * child-facing copy says years and the console still says days. */
+    lv_label_set_text_fmt(l, "%s   -   %d years old   -   %d g\nfeeling %s",
                           pet_stage_name(s->stage), (int)s->days_alive,
                           (int)(s->weight_g + 0.5f), pet_mood_name(pet_mood()));
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
@@ -213,8 +217,10 @@ static void care_lights_cb(lv_event_t *e)
 {
     (void)e;
     if (menu_swipe_active()) return;
-    care_set_lights(!care_lights_on());
-    Serial.printf("LIGHTS %s\n", care_lights_on() ? "ON" : "OFF");
+    /* The PLAYER pressing the switch, so the Visitor gets to react - and the
+     * reaction is deferred until this page closes, because it is spoken on
+     * the pet screen and would otherwise expire behind the menu. */
+    care_player_toggle_lights(!care_lights_on());
     persist_mark_dirty("lights");
     menu_rebuild_page();          /* so the label reflects the new state */
 }
@@ -254,7 +260,22 @@ static void build_care(lv_obj_t *p)
     lv_obj_add_event_cb(b, care_disc_cb, LV_EVENT_CLICKED, NULL);
 }
 
-/* --- 5. Clock / Pet Info ------------------------------------------------- */
+/* --- 5. Settings --------------------------------------------------------
+ * WAS "Pet Info". Renamed in Phase 9.5 because that is what it had already
+ * become: it owns the clock, and it is where the device-level controls
+ * belong. Volume, Recalibrate Tilt and Gravity Reactions are RESERVED here
+ * with visible, disabled cards - Phase 10 owns their behaviour. A reserved
+ * card that is visibly not yet wired is honest; an empty page that grows
+ * three controls later is a surprise.
+ *
+ * The Visitor's own information stays, because a parent looking for "how old
+ * is it" looks here, not on the Journal.
+ *
+ * AGE IS SHOWN IN VISITOR YEARS. 1 real day = 1 Visitor year, which is
+ * already how the stage boundaries are defined (Kid at 1, Teen at 3, Adult
+ * at 6). "day 6" told a child nothing; "6 years old" is the same number
+ * saying something. The DIAGNOSTICS keep printing day numbers - a developer
+ * needs the raw figure and the console is not a child-facing surface. */
 
 static void setclock_cb(lv_event_t *e)
 {
@@ -263,10 +284,10 @@ static void setclock_cb(lv_event_t *e)
     setclock_open();
 }
 
-static void build_clock(lv_obj_t *p)
+static void build_settings(lv_obj_t *p)
 {
     const pet_state_t *s = pet_get();
-    title(p, "Pet Info");
+    title(p, "Settings");
 
     char tb[40];
     if (rtc_trusted()) {
@@ -282,27 +303,36 @@ static void build_clock(lv_obj_t *p)
     lv_obj_set_style_text_font(l, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(l,
         lv_color_hex(rtc_trusted() ? 0xE8E8E8 : 0x3A3A46), 0);
-    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 92);
+    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 78);
 
-    if (!rtc_trusted())
-        note(p, "Clock not set. Aging and offline catch-up stay paused until "
-                "a real date and time are entered.", 126);
-
-    lv_obj_t *sb = card(p, "Set Date & Time", 36, 166, BSP_LCD_W - 72, 56,
+    lv_obj_t *sb = card(p, "Set Date & Time", 36, 124, BSP_LCD_W - 72, 52,
                         0x7FA8E8, true);
     lv_obj_add_event_cb(sb, setclock_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t *i = lv_label_create(p);
-    lv_label_set_text_fmt(i, "stage    %s\nday      %d\nweight   %d g\nform     %s",
-                          pet_stage_name(s->stage), (int)s->days_alive,
-                          (int)(s->weight_g + 0.5f), forms_name(s->form_id));
-    lv_obj_set_style_text_color(i, lv_color_hex(0xB0B8C8), 0);
-    lv_obj_align(i, LV_ALIGN_TOP_MID, 0, 240);
+    if (!rtc_trusted()) {
+        /* Without a trusted clock the age is not merely unknown, it does not
+         * exist - pet_age_days() returns 0 by design. Printing "0 years old"
+         * would be a lie dressed as data, so the explanation takes the slot
+         * the information would have used. */
+        note(p, "Clock not set. Aging and offline catch-up stay paused until "
+                "a real date and time are entered.", 190);
+    } else {
+        lv_obj_t *i = lv_label_create(p);
+        lv_label_set_text_fmt(i,
+            "age      %u years old\nstage    %s\nlooks    %s\nweight   %d g\n%s",
+            (unsigned)s->days_alive, pet_stage_name(s->stage),
+            forms_long_name(s->form_id), (int)(s->weight_g + 0.5f),
+            s->stage == STAGE_EGG ? "not hatched yet"
+                                  : (s->gender == GENDER_GIRL ? "a girl" : "a boy"));
+        lv_obj_set_style_text_color(i, lv_color_hex(0xB0B8C8), 0);
+        lv_obj_align(i, LV_ALIGN_TOP_MID, 0, 190);
+    }
 
-    /* Volume control hook reserved for the audio phase - see
-     * docs/PHASE10-AUDIO-REQUIREMENTS.md. Not built, only reserved. */
-    card(p, "Volume", 36, 336, BSP_LCD_W - 72, 50, 0x9AA6C4, false);
-    note(p, "Volume arrives with audio. Mute will silence sound only.", 392);
+    /* --- reserved for Phase 10. Visible, disabled, and labelled so nobody
+     * has to guess whether they are broken or unfinished. --------------- */
+    card(p, "Volume",            36, 288, BSP_LCD_W - 72, 46, 0x9AA6C4, false);
+    card(p, "Recalibrate Tilt",  36, 340, BSP_LCD_W - 72, 46, 0x9AA6C4, false);
+    card(p, "Gravity Reactions", 36, 392, BSP_LCD_W - 72, 46, 0x9AA6C4, false);
 }
 
 /* --- 6. Journal ---------------------------------------------------------- */
@@ -364,14 +394,26 @@ static void build_journal(lv_obj_t *p)
     lv_coord_t y = 0;
     lv_obj_t *c;
 
-    /* --- who --- */
+    /* --- who ---
+     * The GENDER line sits at the top of the first card on purpose. The
+     * "It's a boy!" reveal happens once, at the hatch, and a child can
+     * easily miss it - so the Journal carries the answer somewhere
+     * unmissable rather than nowhere. */
     c = jcard(sc, "This Visitor", &y, 0x60D0A0);
     char when[32] = "not recorded";
     if (st->hatch_ts) rtc_format(st->hatch_ts, when, sizeof(when));
     snprintf(b, sizeof(b),
-             "%s  (%s)\nDay %u on Earth\nArrived %.10s\nA bit %s, a bit %s",
-             forms_name(st->form_id), pet_stage_name(st->stage), st->days_alive,
+             "It's a %s!\n%s  (%s)\n%u years old\nArrived %.10s\nA bit %s, a bit %s",
+             st->gender == GENDER_GIRL ? "girl" : "boy",
+             forms_long_name(st->form_id), pet_stage_name(st->stage),
+             st->days_alive,
              when, evolve_trait_name(st->trait_a), evolve_trait_name(st->trait_b));
+    jbody(c, b);
+    lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
+
+    /* --- About Me, in the Visitor's own voice --- */
+    c = jcard(sc, "About Me", &y, 0xFFC46B);
+    dialogue_about_me(b, sizeof(b));
     jbody(c, b);
     lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
 
@@ -383,19 +425,64 @@ static void build_journal(lv_obj_t *p)
     jbody(c, b);
     lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
 
-    /* --- how it grew --- */
-    c = jcard(sc, "How I grew", &y, 0xA894EE);
-    int n = snprintf(b, sizeof(b), "Baby");
-    for (uint8_t i = 1; i < 4; i++)
-        if (st->evo_path[i])
-            n += snprintf(b + n, sizeof(b) - n, " -> %s", forms_name(st->evo_path[i]));
-    if (st->stage <= STAGE_BABY) snprintf(b + n, sizeof(b) - n, "\n(still little!)");
+    /* --- how it grew --------------------------------------------------
+     * THE REAL, PERSISTED PATH - one rung per stage actually lived, in
+     * order, with the actual form names.
+     *
+     * This used to print a hardcoded "Baby" and then whatever evo_path[]
+     * happened to contain, which for most Visitors was nothing: the only
+     * writer ran in the offline catch-up and its index expression excluded
+     * the Adult slot entirely. So a Visitor raised on a device that stayed
+     * switched on showed "Baby" and nothing else, however far it had grown.
+     * pet_record_form() now writes from every path, and a save from before
+     * that is backfilled at load with what is knowable.
+     *
+     * Rendered vertically with arrows because it is a ladder, not a
+     * sentence, and because four adult names on one line wrapped badly.
+     * Each stage appears EXACTLY once - the slot IS the stage. */
+    c = jcard(sc, "How I grew up", &y, 0xA894EE);
+    {
+        static const char *STAGE_LABEL[4] = { "Baby", "Kid", "Teen", "Adult" };
+        /* How many rungs this Visitor has actually reached. */
+        const uint8_t reached = (st->stage >= STAGE_BABY)
+                              ? (uint8_t)(st->stage - STAGE_BABY + 1) : 0;
+        int n = 0; b[0] = 0;
+        for (uint8_t i = 0; i < reached && i < 4; i++) {
+            if (i) n += snprintf(b + n, sizeof(b) - n, "\n  |\n  v\n");
+            /* Index 0 is ALWAYS the Baby - see pet_backfill_evo_path() for
+             * why a zero there is not a missing value. */
+            if (i == 0 || st->evo_path[i])
+                n += snprintf(b + n, sizeof(b) - n, "%s",
+                              forms_long_name(i == 0 ? FORM_BABY : st->evo_path[i]));
+            else
+                /* Honest rather than invented. Re-deriving a form from
+                 * today's accumulators would write a guess into the past. */
+                n += snprintf(b + n, sizeof(b) - n, "%s (not recorded)", STAGE_LABEL[i]);
+        }
+        if (!reached) n += snprintf(b + n, sizeof(b) - n, "Still an egg!");
+        else if (st->stage <= STAGE_BABY)
+            snprintf(b + n, sizeof(b) - n, "\n(still little!)");
+    }
     jbody(c, b);
     lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
 
+    /* --- dreams, newest first --- */
+    if (st->dream_n) {
+        c = jcard(sc, "My dreams", &y, 0x8FD3E8);
+        int n = 0; b[0] = 0;
+        for (int8_t i = (int8_t)st->dream_n - 1; i >= 0; i--) {
+            n += snprintf(b + n, sizeof(b) - n, "%s%s",
+                          n ? "\n\n" : "",
+                          dialogue_dream_journal(st->dream_id[i]));
+            if (n >= (int)sizeof(b) - 120) break;
+        }
+        jbody(c, b);
+        lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
+    }
+
     /* --- games --- */
     c = jcard(sc, "Games", &y, 0xFF8A75);
-    n = snprintf(b, sizeof(b), "%u games played\n", g->total_games);
+    int n = snprintf(b, sizeof(b), "%u games played\n", g->total_games);
     for (uint8_t i = 0; i < GAME_COUNT; i++)
         if (g->plays[i])
             n += snprintf(b + n, sizeof(b) - n, "%s: best %u\n",
@@ -413,6 +500,11 @@ static void build_journal(lv_obj_t *p)
     if (st->accidents)        n += snprintf(b + n, sizeof(b) - n, "Little accidents: %u\n", st->accidents);
     if (st->lights_forgotten) n += snprintf(b + n, sizeof(b) - n, "Nights with the light left on: %u\n", st->lights_forgotten);
     if (st->disc_opportunities) n += snprintf(b + n, sizeof(b) - n, "Mischief: %u (told off %u)\n", st->disc_opportunities, st->disc_correct);
+    if (st->disc_opportunities >= 3)
+        n += snprintf(b + n, sizeof(b) - n, "Behaviour now: %s\n",
+                      discipline_learned() >= 65.0f ? "quite the handful"
+                    : discipline_learned() <= 35.0f ? "very well behaved"
+                                                    : "mostly good");
     if (n) {
         c = jcard(sc, "Notable", &y, 0x7FA8E8);
         jbody(c, b);
@@ -440,8 +532,11 @@ static void build_journal(lv_obj_t *p)
         for (uint8_t i = 0; i < visitrec_count() && i < 4; i++) {
             const visit_rec_t *r = visitrec_at(i);
             if (!r) continue;
-            n += snprintf(b + n, sizeof(b) - n, "%s - %u days, loved %s\n",
-                          forms_name(r->final_form), r->days,
+            /* "stayed N days" is a DURATION and says so, which is what a
+             * parent wants from this card. The Visitor's own age is on the
+             * cards above, in Visitor years. */
+            n += snprintf(b + n, sizeof(b) - n, "%s - stayed %u days, loved %s\n",
+                          forms_long_name(r->final_form), r->days,
                           evolve_food_name(r->fav_food));
         }
         jbody(c, b);
@@ -459,7 +554,7 @@ lv_obj_t *page_create(uint8_t idx, lv_obj_t *parent)
         case PAGE_FOOD:    build_food(p);    break;
         case PAGE_GAMES:   build_games(p);   break;
         case PAGE_CARE:    build_care(p);    break;
-        case PAGE_CLOCK:   build_clock(p);   break;
+        case PAGE_CLOCK:   build_settings(p); break;
         case PAGE_JOURNAL: build_journal(p); break;
         default: break;
     }
@@ -473,7 +568,7 @@ const char *page_name(uint8_t idx)
         case PAGE_FOOD:    return "Food";
         case PAGE_GAMES:   return "Games";
         case PAGE_CARE:    return "Care";
-        case PAGE_CLOCK:   return "Pet Info";
+        case PAGE_CLOCK:   return "Settings";
         case PAGE_JOURNAL: return "Journal";
         default:           return "?";
     }

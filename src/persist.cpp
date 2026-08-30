@@ -82,6 +82,14 @@ static void pack(save_t *b)
     b->depart_due_ts       = p->depart_due_ts;
     b->depart_locked       = p->depart_locked;
     b->stay_band           = p->stay_band;
+    b->gender              = p->gender;
+    b->gender_choice       = p->gender_choice;
+    b->learned_mischief    = p->learned_mischief;
+    for (uint8_t i = 0; i < DREAM_KEEP; i++) b->dream_id[i] = p->dream_id[i];
+    b->dream_n             = p->dream_n;
+    b->sleep_accum_sec     = p->sleep_accum_sec;
+    b->sleep_flags         = p->sleep_flags;
+    b->pending_dream       = p->pending_dream;
     journal_store(b);
 
     b->bathroom  = (uint8_t)(p->bathroom + 0.5f);
@@ -160,6 +168,15 @@ static void unpack(const save_t *b)
     p->depart_due_ts      = b->depart_due_ts;
     p->depart_locked      = b->depart_locked;
     p->stay_band          = b->stay_band;
+    p->gender             = b->gender;
+    p->gender_choice      = b->gender_choice;
+    p->learned_mischief   = b->learned_mischief;
+    for (uint8_t i = 0; i < DREAM_KEEP; i++) p->dream_id[i] = b->dream_id[i];
+    p->dream_n            = b->dream_n;
+    if (p->dream_n > DREAM_KEEP) p->dream_n = DREAM_KEEP;
+    p->sleep_accum_sec    = b->sleep_accum_sec;
+    p->sleep_flags        = b->sleep_flags;
+    p->pending_dream      = b->pending_dream;
     journal_load(b);
 
     p->bathroom  = (float)b->bathroom;
@@ -229,6 +246,27 @@ load_result_t persist_load(void)
                           evolve_trait_name(p->trait_a),
                           evolve_trait_name(p->trait_b), p->mischief);
         }
+
+        /* Learned behaviour, validated the same way and for the same reason:
+         * a field that arrives as a NaN or an out-of-range float from a
+         * corrupt-but-CRC-valid tail would otherwise poison every mischief
+         * roll for the rest of the visit. */
+        if (!(p->learned_mischief >= 0.0f) || p->learned_mischief > 100.0f) {
+            Serial.println("SAVE: learned behaviour out of range - back to neutral");
+            p->learned_mischief = LEARN_START;
+        }
+        /* Identity is presentation only, so an invalid value is repaired
+         * silently rather than rerolled loudly - but it IS repaired, because
+         * the Journal prints it. */
+        if (p->gender > GENDER_GIRL) p->gender = GENDER_BOY;
+        if (p->gender_choice > GENDER_SURPRISE) p->gender_choice = GENDER_SURPRISE;
+
+        /* THE "HOW I GREW UP" BACKFILL. Saves written before Phase 9.5 have a
+         * mostly-empty evo_path[] - the old writer only ran in the offline
+         * path and could never record an Adult. Fill in what is KNOWABLE
+         * (Baby, and the form on screen now); anything else stays blank and
+         * the Journal says so rather than inventing history. */
+        pet_backfill_evo_path();
     }
     Serial.printf("SAVE load: %s\n", storage_load_result_str(r));
     if (r == LOAD_MIGRATED)

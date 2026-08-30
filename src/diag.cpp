@@ -24,6 +24,7 @@
 #include "journal.h"
 #include "visitrec.h"
 #include "farewell.h"
+#include "dialogue.h"
 #include "menu.h"
 #include "pages.h"
 #include "pet.h"
@@ -941,6 +942,16 @@ static void diag_simulate_absence(uint32_t hours)
     const char *g = sim_return_greeting(&rep);
     Serial.printf("  return greeting: %s\n", g ? g : "(none - too short to mention)");
     if (g) ui_bubble_say(BUBBLE_T0_CRITICAL, g);
+    /* No dream hook needed here: sim_catch_up() ran care_advance() for every
+     * chunk, so any sleep period the absence contained has already opened,
+     * accumulated and closed itself - recording its one dream if it earned
+     * one. This just reports what that produced. */
+    const pet_state_t *q = pet_get();
+    if (q->pending_dream)
+        Serial.printf("  dream from the absence: \"%s\" (waiting to be told)\n",
+                      dialogue_dream_bubble((uint8_t)(q->pending_dream - 1)));
+    else
+        Serial.println("  dream from the absence: none earned");
 }
 
 /* Persistence fidelity. Freezes the simulator first, so any difference
@@ -1135,6 +1146,77 @@ static void diag_screen(bool pet)
     else     { ui_diag_show();  Serial.println("screen -> Phase 1 test card (frozen baseline)"); }
 }
 
+/* --- PHASE 9.5: identity, growth path, dreams, learned behaviour ---------
+ * One place to check everything this pass persists. Written as a REPORT with
+ * expectations rather than a dump, because the interesting questions here
+ * are "did the Surprise survive the reboot" and "is the growth path complete"
+ * - neither of which a list of raw bytes answers. */
+void diag_identity_report(void)
+{
+    const pet_state_t *p = pet_get();
+    Serial.println();
+    Serial.println("=== IDENTITY / GROWTH / BEHAVIOUR =========================");
+
+    Serial.printf("  colour  : palette %u", p->egg_color);
+    if (p->egg_choice >= EGG_PALETTE_COUNT)
+        Serial.printf("   choice SURPRISE%s\n",
+                      p->stage == STAGE_EGG && !p->egg_hatch_ts
+                        ? " (not resolved yet - shell shows the rainbow)"
+                        : " (resolved and locked at START)");
+    else
+        Serial.printf("   choice %u (explicit)\n", p->egg_choice);
+
+    Serial.printf("  gender  : %s   choice %s\n",
+                  p->gender == GENDER_GIRL ? "girl" : "boy",
+                  p->gender_choice == GENDER_BOY  ? "Boy" :
+                  p->gender_choice == GENDER_GIRL ? "Girl" : "SURPRISE");
+    Serial.println("            identity only - it reaches no accumulator, form");
+    Serial.println("            choice, care rate or discipline roll.");
+
+    Serial.printf("  age     : %.2f days = %u Visitor years  (stage %s)\n",
+                  (double)pet_age_days(), p->days_alive, pet_stage_name(p->stage));
+
+    Serial.println("  HOW I GREW UP (the persisted path, one rung per stage):");
+    static const char *SL[4] = { "Baby", "Kid", "Teen", "Adult" };
+    const uint8_t reached = (p->stage >= STAGE_BABY)
+                          ? (uint8_t)(p->stage - STAGE_BABY + 1) : 0;
+    if (!reached) Serial.println("    (still an egg)");
+    for (uint8_t i = 0; i < reached && i < 4; i++)
+        Serial.printf("    %-6s %s\n", SL[i],
+                      (i == 0 || p->evo_path[i])
+                        ? forms_long_name(i == 0 ? FORM_BABY : p->evo_path[i])
+                        : "(not recorded - save predates 9.5)");
+    for (uint8_t i = reached; i < 4; i++)
+        Serial.printf("    %-6s (not reached yet)\n", SL[i]);
+
+    /* THE SLEEP PERIOD. Printed because the dream rules are decided from it
+     * and from nothing else - if a night ever produces two dreams, or none,
+     * these three values are where the answer is. */
+    Serial.printf("  sleep   : %s%s%s  recorded %lu min\n",
+                  (p->sleep_flags & SLEEPF_IN_PERIOD) ? "period OPEN" : "awake",
+                  (p->sleep_flags & SLEEPF_NAP)       ? " (nap)"      : "",
+                  (p->sleep_flags & SLEEPF_DREAMT)    ? " ALREADY DREAMT" : "",
+                  (unsigned long)(p->sleep_accum_sec / 60));
+    Serial.printf("            needs %lu min (night) / %lu min (nap) to dream\n",
+                  (unsigned long)(DREAM_MIN_NIGHT_SEC / 60),
+                  (unsigned long)(DREAM_MIN_NAP_SEC / 60));
+    if (p->pending_dream)
+        Serial.printf("            a dream is WAITING to be told: \"%s\"\n",
+                      dialogue_dream_bubble((uint8_t)(p->pending_dream - 1)));
+
+    Serial.printf("  dreams  : %u kept of %u in the table\n",
+                  p->dream_n, dialogue_dream_count());
+    for (uint8_t i = 0; i < p->dream_n; i++)
+        Serial.printf("    %u: %s\n", p->dream_id[i],
+                      dialogue_dream_journal(p->dream_id[i]));
+
+    Serial.printf("  learned behaviour %.1f  (0 calm .. 100 wild; %u opportunities, "
+                  "%u ignored)\n", p->learned_mischief, p->disc_opportunities,
+                  p->disc_ignored);
+    Serial.printf("  deferred bubbles queued: %u\n", ui_bubble_deferred_count());
+    Serial.println("-----------------------------------------------------------");
+}
+
 void diag_help(void)
 {
     Serial.println();
@@ -1166,7 +1248,7 @@ void diag_help(void)
     Serial.println("  l  toggle Lights (affects sleep recovery)");
     Serial.println("  h  simulate 8 h away    H  simulate 72 h    j  simulate 8 days");
     Serial.println("  p  force a save now + write/skip counters");
-    Serial.println("  V  v1 -> v2 migration test   #  v5 -> v6 migration test");
+    Serial.println("  V  v1 -> v8   #  v6 -> v8   {  v5 -> v8   \"  v7 -> v8");
     Serial.println("  Y  persistence fidelity test (freezes sim, then reboot)");
     Serial.println("  y  toggle simulation suspend");
     Serial.println("  N  clock -> 20:30 bedtime   G  -> 07:30 wake   A  -> 13:30 nap");
@@ -1181,7 +1263,12 @@ void diag_help(void)
     Serial.println("  ,  age +1h   .  age +6h   %  age +24h   *  age clock report");
     Serial.println("  $  departure report + calibration   !  age pending departure 24h");
     Serial.println("  J  visit records report   @  jump to departure   ;  acknowledge");
-    Serial.println("  :  start egg (10s)");
+    Serial.println("  :  START the egg (90s)   |  cycle colour   -  cycle gender");
+    Serial.println("  --- Phase 9.5: personality, dreams, identity ---");
+    Serial.println("  U  dialogue samples + About Me   I  identity / growth / behaviour");
+    Serial.println("  ~  FORCE a dream (bypasses the rules)   ^  dream ELIGIBILITY rules");
+    Serial.println("  (  deferred-reaction test        )  old-mess comment samples");
+    Serial.println("  }  learned-behaviour recovery demo");
     Serial.println("  B  one sample bubble (cycles tiers)");
     Serial.println("  S  BUBBLE STRESS TEST - 20 requests, most should refuse");
     Serial.println("  L  BUBBLE LAYOUT TEST - 4 strings x 3 pet positions");
@@ -1264,7 +1351,11 @@ void diag_serial_tick(void)
             case 'h': diag_simulate_absence(8);   break;
             case 'H': diag_simulate_absence(72);  break;
             case 'j': diag_simulate_absence(192); break;   /* 8 days */
-            case 'l': care_set_lights(!care_lights_on());
+            /* The console stands in for the player here, so it goes through
+             * the PLAYER entry point - otherwise 'l' would silently exercise
+             * a different code path from the Care page button and the lights
+             * reaction could never be tested from the console at all. */
+            case 'l': care_player_toggle_lights(!care_lights_on());
                       Serial.printf("lights %s\n", care_lights_on() ? "ON" : "off");
                       break;
             case 'p': persist_save(true); persist_report(); break;
@@ -1309,11 +1400,43 @@ void diag_serial_tick(void)
             case '*': diag_age_report();         break;
             case 'J': visitrec_report();         break;
             case ':': {   /* start the egg timer, shortened for testing */
+                if (pet_get()->stage != STAGE_EGG) { Serial.println("not an egg"); break; }
+                /* THE SAME function the START button calls. This used to set
+                 * egg_hatch_ts directly, which skipped the Surprise
+                 * resolution entirely - so the command everyone would reach
+                 * for to test hatching was driving a path the product does
+                 * not have. */
+                Serial.println("(test) pressing START on the player's behalf, 90 s timer");
+                /* 90 s, not 10: long enough to power-cycle the device mid-hatch
+                 * and prove the resolved identity came back from NVS rather
+                 * than being rerolled. */
+                scr_main_egg_start(90);
+                break;
+            }
+            case '|': {   /* cycle the COLOUR choice, as the swatches do */
                 pet_state_t *pp = pet_mutable();
-                if (pp->stage != STAGE_EGG) { Serial.println("not an egg"); break; }
-                const uint32_t now = rtc_trusted() ? rtc_now() : (millis() / 1000);
-                pp->egg_hatch_ts = now + 10;
-                Serial.println("(test) egg timer started - hatching in 10 s");
+                if (pp->stage != STAGE_EGG || pp->egg_hatch_ts) {
+                    Serial.println("colour is locked - not a fresh egg"); break;
+                }
+                pp->egg_choice = (uint8_t)((pp->egg_choice + 1) % (EGG_PALETTE_COUNT + 1));
+                if (pp->egg_choice < EGG_PALETTE_COUNT) pp->egg_color = pp->egg_choice;
+                Serial.printf("EGG: colour choice -> %s\n",
+                              pp->egg_choice >= EGG_PALETTE_COUNT
+                                ? "SURPRISE (rainbow shell, resolved at START)"
+                                : "explicit");
+                persist_mark_dirty("egg colour");
+                break;
+            }
+            case '-': {   /* cycle the GENDER choice, as the buttons do */
+                pet_state_t *pp = pet_mutable();
+                if (pp->stage != STAGE_EGG || pp->egg_hatch_ts) {
+                    Serial.println("gender is locked - not a fresh egg"); break;
+                }
+                pp->gender_choice = (uint8_t)((pp->gender_choice + 1) % 3);
+                Serial.printf("EGG: gender choice -> %s\n",
+                              pp->gender_choice == GENDER_BOY  ? "Boy"  :
+                              pp->gender_choice == GENDER_GIRL ? "Girl" : "SURPRISE");
+                persist_mark_dirty("gender choice");
                 break;
             }
             case ';': farewell_acknowledge();    break;
@@ -1388,9 +1511,9 @@ void diag_serial_tick(void)
                                     pet_sim_suspended() ? "SUSPENDED" : "running");
                       break;
             case 'v'+1024: break;
-            case '#': {   /* v5 -> v6: the migration this pass actually added */
+            case '{': {   /* v5 -> v7: the older chain, still exercised */
                 Serial.println();
-                Serial.println("=== v5 -> v6 MIGRATION TEST ===============================");
+                Serial.println("=== v5 -> v8 MIGRATION TEST (older chain) =================");
                 const uint32_t hatch = (rtc_trusted() ? rtc_now() : 1787000000UL)
                                      - (uint32_t)(11.4f * 86400.0f);
                 storage_write_fake_v5(hatch, 44.0f, 81.0f, FORM_ADULT_SWEET,
@@ -1426,9 +1549,147 @@ void diag_serial_tick(void)
                 visit_report();
                 break;
             }
+            case '"': {   /* v7 -> v8: the hop the sleep period added */
+                Serial.println();
+                Serial.println("=== v7 -> v8 MIGRATION TEST ===============================");
+                const uint32_t hatch = (rtc_trusted() ? rtc_now() : 1787000000UL)
+                                     - (uint32_t)(11.4f * 86400.0f);
+                storage_write_fake_v7(hatch, 44.0f, 81.0f, FORM_ADULT_SWEET,
+                                      PERS_TIDY, PERS_CURIOUS);
+                const load_result_t r = persist_load();
+                const pet_state_t *q = pet_get();
+                Serial.printf("  result       : %s  (expect MIGRATED)\n",
+                              storage_load_result_str(r));
+                Serial.printf("  hunger       : %.0f   (expect 44)\n", q->hunger);
+                Serial.printf("  evo_path     : %s -> %s -> %s -> %s\n",
+                              forms_long_name(q->evo_path[0]), forms_long_name(q->evo_path[1]),
+                              forms_long_name(q->evo_path[2]), forms_long_name(q->evo_path[3]));
+                Serial.printf("  depart_day   : %.2f lock %u  (pacing state kept)\n",
+                              (double)q->depart_day, q->depart_locked);
+                Serial.println("  --- the schema-7 tail must be UNTOUCHED ---");
+                Serial.printf("  gender       : %s, choice %s  (expect girl / SURPRISE)\n",
+                              q->gender == GENDER_GIRL ? "girl" : "boy",
+                              q->gender_choice == GENDER_SURPRISE ? "SURPRISE" : "explicit");
+                Serial.printf("  learned      : %.1f   (expect 73.5 - NOT reset)\n",
+                              q->learned_mischief);
+                Serial.printf("  dreams       : %u kept  (expect 3)\n", q->dream_n);
+                Serial.println("  --- the new schema-8 tail ---");
+                Serial.printf("  sleep period : %s  recorded %lu min  (expect closed / 0 -\n",
+                              (q->sleep_flags & SLEEPF_IN_PERIOD) ? "OPEN" : "closed",
+                              (unsigned long)(q->sleep_accum_sec / 60));
+                Serial.println("                 a zeroed tail IS correct here: no period was open)");
+                Serial.printf("  pending dream: %u   (expect 0)\n", q->pending_dream);
+                Serial.println("-----------------------------------------------------------");
+                break;
+            }
+            case '#': {   /* v6 -> v8 */
+                Serial.println();
+                Serial.println("=== v6 -> v8 MIGRATION TEST ===============================");
+                const uint32_t hatch = (rtc_trusted() ? rtc_now() : 1787000000UL)
+                                     - (uint32_t)(11.4f * 86400.0f);
+                storage_write_fake_v6(hatch, 44.0f, 81.0f, FORM_ADULT_SWEET,
+                                      PERS_TIDY, PERS_CURIOUS);
+                const load_result_t r = persist_load();
+                const pet_state_t *q = pet_get();
+                Serial.printf("  result       : %s  (expect MIGRATED)\n",
+                              storage_load_result_str(r));
+                Serial.printf("  hunger       : %.0f   (expect 44 - preserved)\n", q->hunger);
+                Serial.printf("  care_happy   : %.0f   (expect 81 - accumulator kept)\n",
+                              q->care_happy);
+                Serial.printf("  personality  : %s + %s  (expect tidy + curious)\n",
+                              evolve_trait_name(q->trait_a), evolve_trait_name(q->trait_b));
+                Serial.printf("  form         : %s   (expect Sweet - NOT re-picked)\n",
+                              forms_name(q->form_id));
+                Serial.printf("  evo_path     : %s -> %s -> %s -> %s  (preserved)\n",
+                              forms_long_name(q->evo_path[0]), forms_long_name(q->evo_path[1]),
+                              forms_long_name(q->evo_path[2]), forms_long_name(q->evo_path[3]));
+                Serial.printf("  evo_announce : %u   (MUST be 0 - no replayed reveal)\n",
+                              q->evo_announce);
+                Serial.printf("  journal      : %u entries  (preserved)\n", journal_count());
+                Serial.printf("  depart_day   : %.2f  (expect 12.50 - PACING STATE KEPT)\n",
+                              (double)q->depart_day);
+                Serial.printf("  depart_lock  : %u   (expect 1 - the lock survives)\n",
+                              q->depart_locked);
+                Serial.println("  --- the new schema-7 tail ---");
+                Serial.printf("  gender       : %s, choice %s\n",
+                              q->gender == GENDER_GIRL ? "girl" : "boy",
+                              q->gender_choice == GENDER_SURPRISE ? "SURPRISE (correct: the "
+                              "player was never asked)" : "explicit (WRONG for a v6 save)");
+                Serial.printf("  learned      : %.1f   (expect %.0f - NEUTRAL, not 0)\n",
+                              q->learned_mischief, (double)LEARN_START);
+                Serial.printf("  dreams       : %u   (expect 0 - none have happened)\n",
+                              q->dream_n);
+                Serial.println("-----------------------------------------------------------");
+                break;
+            }
+            case 'U': dialogue_report();         break;
+            case 'I': diag_identity_report();    break;
+            case '~': {
+                Serial.println("(test) forcing a NIGHT dream");
+                care_dream(false, false);
+                break;
+            }
+            case '^':
+                /* The RULES, run against constructed periods - durations,
+                 * one-per-period, and the nap roll as a distribution. */
+                ui_bubble_set_suppressed(true);
+                care_dream_rules_probe();
+                ui_bubble_set_suppressed(false);
+                break;
+            case '(': {
+                /* The deferred-reaction proof. Opens the menu, fires a
+                 * reaction into it, and shows the queue holding it - the
+                 * whole failure this mechanism exists to fix. */
+                Serial.println();
+                Serial.println("=== DEFERRED REACTION TEST ================================");
+                if (!menu_is_open()) menu_open();
+                Serial.printf("  menu open: %s   bubbles suppressed: %s\n",
+                              menu_is_open() ? "yes" : "NO",
+                              ui_bubble_suppressed() ? "yes" : "NO");
+                ui_bubble_say_deferred(BUBBLE_T1_REACTION, dialogue_lights_off());
+                Serial.printf("  queued: %u  (a plain ui_bubble_say() would be LOST here)\n",
+                              ui_bubble_deferred_count());
+                Serial.println("  closing the menu - it should appear on the pet screen now");
+                menu_close();
+                Serial.println("-----------------------------------------------------------");
+                break;
+            }
+            case ')': {
+                /* The REAL trigger, not just the line table. */
+                care_stink_probe();
+                Serial.println("  line variants for this Visitor:");
+                for (uint8_t i = 0; i < 6; i++)
+                    Serial.printf("    %s\n", dialogue_stink());
+                break;
+            }
+            case '}': {
+                /* RECOVERABILITY, demonstrated rather than asserted. Five
+                 * ignored windows then five corrected ones: the record must
+                 * climb, then come back down. Nothing is ever locked. */
+                Serial.println();
+                Serial.println("=== LEARNED BEHAVIOUR: IS IT RECOVERABLE? =================");
+                pet_state_t *q = pet_mutable();
+                const float was = q->learned_mischief;
+                Serial.printf("  start          %.1f\n", was);
+                for (uint8_t i = 0; i < 5; i++) {
+                    q->learned_mischief += LEARN_ALPHA * (100.0f - q->learned_mischief);
+                    Serial.printf("  ignored  #%u -> %.1f\n", i + 1, q->learned_mischief);
+                }
+                for (uint8_t i = 0; i < 5; i++) {
+                    q->learned_mischief += LEARN_ALPHA * (0.0f - q->learned_mischief);
+                    Serial.printf("  corrected #%u -> %.1f\n", i + 1, q->learned_mischief);
+                }
+                Serial.printf("  finished at %.1f: neglect RAISES it, later care LOWERS it,\n",
+                              q->learned_mischief);
+                Serial.println("  and neither direction is ever locked in.");
+                q->learned_mischief = was;      /* a test must not alter history */
+                Serial.printf("  restored to %.1f (the demo does not change the Visitor)\n", was);
+                Serial.println("-----------------------------------------------------------");
+                break;
+            }
             case 'V': {
                 Serial.println();
-                Serial.println("=== v1 -> v2 MIGRATION TEST ===============================");
+                Serial.println("=== v1 -> v8 MIGRATION TEST (oldest chain) ================");
                 storage_write_fake_v1(41.0f, 58.5f, 4);
                 const load_result_t r = persist_load();
                 const pet_state_t *q = pet_get();

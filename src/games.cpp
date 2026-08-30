@@ -19,6 +19,7 @@
 #include "forms.h"
 #include "evolve.h"
 #include "journal.h"
+#include "dialogue.h"
 #include "games.h"
 #include "diag.h"
 #include <math.h>
@@ -371,7 +372,7 @@ static void games_exit(void)
     menu_goto(PAGE_GAMES);
     if (dead) lv_obj_del(dead);
 
-    ui_bubble_say(BUBBLE_T1_REACTION, "That was fun!");
+    ui_bubble_say(BUBBLE_T1_REACTION, dialogue_game_done());
     Serial.println("GAME exit -> Games page");
 }
 

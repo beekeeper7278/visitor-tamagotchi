@@ -56,11 +56,25 @@ static uint32_t  s_egg_twitch_at, s_egg_twitch_t0;
 
 /* Shell + a lighter speckle of the same family. Cosmetic only - nothing here
  * touches evolution. */
-static const uint32_t EGG_SHELL[EGG_PALETTE_COUNT] = {
-    0xE04A4A, 0x9B6BD8, 0x5A9BE8, 0x5FBF6B, 0x4FC3B0, 0xF2C14E
+/* Six real shells plus a seventh RAINBOW entry at index EGG_PAL_RAINBOW.
+ * The rainbow is the "Surprise" shell: it is shown while the player has
+ * chosen Surprise, and it is what keeps the resolved colour hidden right up
+ * to the hatch. The resolved colour is decided at START and persisted - the
+ * rainbow is a display state, never a stored one. */
+static const uint32_t EGG_SHELL[EGG_PALETTE_COUNT + 1] = {
+    0xE04A4A, 0x9B6BD8, 0x5A9BE8, 0x5FBF6B, 0x4FC3B0, 0xF2C14E,
+    0xF0EAF4                       /* rainbow: a pale shell for bright spots */
 };
-static const uint32_t EGG_SPOT[EGG_PALETTE_COUNT] = {
-    0xFFA85C, 0xFFB6E0, 0xB4DCFF, 0xB8EFB0, 0xBDF0E6, 0xFFF0B8
+static const uint32_t EGG_SPOT[EGG_PALETTE_COUNT + 1] = {
+    0xFFA85C, 0xFFB6E0, 0xB4DCFF, 0xB8EFB0, 0xBDF0E6, 0xFFF0B8,
+    0x000000                       /* rainbow: unused, see RAINBOW_SPOT */
+};
+
+/* The rainbow shell's spots are the six palette colours themselves, one per
+ * dot, so "Surprise" visibly means "it could be any of these" rather than
+ * "the colour is broken". EGG_DOTS is 7, so the last dot repeats the first. */
+static const uint32_t RAINBOW_SPOT[EGG_DOTS] = {
+    0xE04A4A, 0x9B6BD8, 0x5A9BE8, 0x5FBF6B, 0x4FC3B0, 0xF2C14E, 0xE04A4A
 };
 
 /* --- state -------------------------------------------------------------- */
@@ -443,7 +457,9 @@ static void layout_egg(void)
     for (int i = 0; i < EGG_DOTS; i++) {
         lv_obj_set_size(o_egg_dot[i], dsz[i], dsz[i]);
         lv_obj_set_style_radius(o_egg_dot[i], LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(o_egg_dot[i], lv_color_hex(EGG_SPOT[s_egg_pal]), 0);
+        lv_obj_set_style_bg_color(o_egg_dot[i],
+            lv_color_hex(s_egg_pal >= EGG_PALETTE_COUNT ? RAINBOW_SPOT[i]
+                                                        : EGG_SPOT[s_egg_pal]), 0);
         lv_obj_set_pos(o_egg_dot[i], ex + ew / 2 - dsz[i] / 2 + dx[i], ey + dy[i]);
         show(o_egg_dot[i], true);
     }
@@ -704,8 +720,14 @@ void ui_pet_set_baby_palette(int idx)
 void ui_pet_set_egg(bool on, uint8_t palette)
 {
     s_egg_on  = on;
-    s_egg_pal = (palette < EGG_PALETTE_COUNT) ? palette : 0;
-    if (on) { s_pos_x = PET_HOME_X; s_pos_y = PET_HOME_Y; s_wander_on = false; }
+    /* EGG_PAL_RAINBOW is a legal palette now, so the clamp is one wider. */
+    s_egg_pal = (palette <= EGG_PAL_RAINBOW) ? palette : 0;
+    /* The egg sits HIGHER than the Visitor's home spot. The pre-hatch screen
+     * now carries two rows of colour, a gender row and START below it, and at
+     * PET_HOME_Y the shell was drawn underneath the pickers - present in the
+     * object tree, invisible in practice. EGG_ROOT_Y is derived with the rest
+     * of that layout in config.h. */
+    if (on) { s_pos_x = PET_HOME_X; s_pos_y = EGG_ROOT_Y; s_wander_on = false; }
     else    { s_wander_on = true; }
 }
 

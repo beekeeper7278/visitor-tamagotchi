@@ -26,9 +26,22 @@ extern "C" {
 
 /* What the world was doing during a chunk. */
 typedef struct {
-    bool asleep;
+    bool asleep;        /* the Visitor is in bed - drives the STAT RATES   */
     bool lights_on;
     bool offline;       /* offline chunks obey the damage budget below     */
+
+    /* THE CLOCK says this is a sleep period, which is NOT the same thing as
+     * `asleep`. A scripted action can take the Visitor out of bed at 3 am,
+     * and sim_catch_up() deliberately clears `asleep` at the end of a boot
+     * catch-up ("you are here now") - both leave the flag false while the
+     * night is still very much in progress.
+     *
+     * Rates follow `asleep`, because that is about the Visitor. The sleep
+     * PERIOD follows this, because that is about the schedule. Conflating
+     * them made a boot at 2 am close the night and open a second one, so
+     * one night produced two dreams. */
+    bool sleep_window;
+    bool nap;           /* ...and the period is an afternoon nap           */
 } sim_ctx_t;
 
 /* Remaining damage allowance for one absence. Live ticks pass a budget with
@@ -69,6 +82,13 @@ void  sim_print_report(void);
 
 /* The single highest-priority return line, never a stack of greetings. */
 const char *sim_return_greeting(const sim_report_t *r);
+
+/* GONE, deliberately. Dream eligibility used to be decided here, from the
+ * chunk counts of one absence - which meant the offline path and the live
+ * path had separate rules and neither knew what the other had already done.
+ * It now lives with the sleep period itself in care_advance(), so an absence
+ * and a night spent at the device are accumulated by the same code and a
+ * period that spans both is still ONE period. See pet.h. */
 
 #ifdef __cplusplus
 }

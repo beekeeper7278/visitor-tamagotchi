@@ -30,6 +30,9 @@ void diag_summary(void);
 void diag_rtc_clear_os(void);   /* measurement 7b */
 void diag_imu_capture_start(void); /* measurement 4 - guided axis capture */
 void diag_help(void);
+
+/* Phase 9.5: identity, the persisted growth path, dreams, learned behaviour. */
+void diag_identity_report(void);
 void diag_serial_tick(void);
 bool diag_imu_stream_enabled(void);
 

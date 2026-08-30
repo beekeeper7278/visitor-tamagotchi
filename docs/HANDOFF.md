@@ -1,32 +1,13 @@
 # Visitor — Continuation / Handoff
 
-Written 2026-08-29 at the end of the gameplay pacing & balance pass, before a
-context compaction. Everything here was verified against the tree or the
-device at the time of writing; where something is unverified it says so.
+Rewritten 2026-08-30 at the end of Phase 9.5.
 
 ---
 
-## 0. READ THIS FIRST - the work is committed on a branch
+## 0. Status
 
-**Superseded.** An earlier version of this section said Phase 8, Phase 9 and
-the pacing pass were all UNCOMMITTED and that `git checkout .` would destroy
-them. That is no longer true.
-
-Everything is committed on branch **`wip/phase8-9-pacing`**:
-
-    acdd3a1  WIP: Phase 8-9 and gameplay pacing pass
-    e8726d0  Add continuation handoff document
-    c39b3e1  (tag: phase7-games-baseline)
-
-The pacing pass finished on top of `acdd3a1` and is in the working tree,
-uncommitted, pending acceptance on hardware. `main` is still at
-`phase7-games-baseline` and nothing has been pushed.
-
-The phase gate still stands: work is committed and tagged only after the user
-accepts it on hardware. Ask before committing; do not merge to `main`
-unilaterally.
-
-## 1. Current status
+**Phase 9.5 (personality, dreams, identity, refinement) is COMPLETE, accepted
+on hardware, committed and tagged `phase9.5-polish-baseline`.**
 
 | Phase | State |
 |---|---|
@@ -35,61 +16,134 @@ unilaterally.
 | 3+4 Menu, pages, food, care, bathroom, messes | COMPLETE, tagged |
 | 5+6 RTC, aging, sleep, persistence, offline catch-up | COMPLETE, tagged |
 | 7 All four games | COMPLETE, tagged |
-| 8 Evolution / personality / discipline | COMPLETE, **uncommitted** |
-| 9 Journal / Visit Records / farewell / egg | COMPLETE, **uncommitted** |
-| Pacing & balance pass | **COMPLETE, uncommitted** — see §6 |
+| 8 Evolution / personality / discipline | COMPLETE, tagged |
+| 9 Journal / Visit Records / farewell / egg | COMPLETE, tagged |
+| Pacing & balance pass | COMPLETE, tagged `pacing-balance-baseline` |
+| **9.5 Personality / dreams / identity / refinement** | **COMPLETE, tagged `phase9.5-polish-baseline`** |
 | 10 IMU personality, tilt calibration, audio | NOT STARTED |
 
-**Do not begin Phase 10** until the pacing pass is finished and accepted.
+Full detail for 9.5 is in `docs/PHASE9.5-REQUIREMENTS.md`, including the
+eight defects the verification pass found and fixed.
 
-## 2. Git
+**Do not begin Phase 10 without being asked.**
 
-    c39b3e1  (tag: phase7-games-baseline)  Phase 7 baseline: all four games
-    c59a2fb  (tag: phase5-6-baseline)      RTC, aging, sleep, persistence, offline
-    ba8705b                                Record Phase 5+6 offline requirements
-    7bb370b  (tag: phase3-4-baseline)      Menu, six pages, food, care, messes
-    2828dd2                                Record Journal and audio requirements
-    e751e42                                Record Phase 4 design requirements
-    14cb83a  (tag: phase2-pet-baseline)    Pet sprite, animation, speech bubbles
-    17f0727  (tag: phase1-hardware-baseline)
+## 1. Git
 
-Branch `main`. Nothing has ever been pushed — the user has said "do not push"
-each time. There is no remote configured for this work.
+Branch `wip/phase8-9-pacing`. Nothing has ever been pushed — the user has
+said "do not push" each time, and there is no remote configured.
 
-## 3. Save schema
+    HEAD    (tag: phase9.5-polish-baseline)  Phase 9.5: personality, dreams,
+                                             identity, refinement
+    496cf0c (tag: pacing-balance-baseline)   Pacing & balance pass
+    acdd3a1  WIP: Phase 8-9 and gameplay pacing pass
+    c39b3e1 (tag: phase7-games-baseline)
+    c59a2fb (tag: phase5-6-baseline)
+    7bb370b (tag: phase3-4-baseline)
+    14cb83a (tag: phase2-pet-baseline)
+    17f0727 (tag: phase1-hardware-baseline)
 
-**Schema 6. `sizeof(save_t)` = 417 bytes. `SAVE_SIZE_BUDGET` = 448.**
-A `static_assert` in `storage.h` fails the build if the blob overruns — leave it.
+`main` is still at `e8726d0`. The phase gate stands: work is committed and
+tagged only after the user accepts it on hardware. Ask before committing; do
+not merge to `main` unilaterally.
 
-Migration chain is `v1 -> v2 -> v3 -> v4 -> v5`, every step "copy the old blob,
-zero the tail", because **every schema has appended only**. Frozen sizes:
+## 2. What Phase 9.5 added
 
-    SAVE_V1_SIZE 332   SAVE_V3_SIZE 397
-    SAVE_V2_SIZE 363   SAVE_V4_SIZE 403
+**Settings page.** "Pet Info" is renamed to Settings and is now the device's
+home for Date & Time, the Visitor's age/stage/form/weight/gender, and three
+RESERVED, visibly-disabled cards that Phase 10 owns: Volume, Recalibrate
+Tilt, Gravity Reactions.
 
-A wrong frozen size rejects every save of that version as corrupt. This
-happened once: `SAVE_V4_SIZE` was briefly set to 407 (which is schema 5) and
-would have discarded all v4 saves. Recheck arithmetic if you add a schema.
+**Age copy: 1 real day = 1 Visitor year**, said out loud in the child-facing
+UI ("6 years old", not "day 6"). Diagnostics keep printing day numbers. Visit
+Records keep *days* because that is a duration, and now say "stayed N days".
 
-Separate versioned NVS keys, deliberately NOT part of the pet blob:
+**Surprise colour and gender.** "Random" is now "Surprise" everywhere the
+player can see it. Seven colours (Red, Purple, Blue, Green, Teal, Yellow,
+Surprise) and three genders (Boy, Girl, Surprise). The Surprise swatch is
+drawn as the six colours in stripes, and the egg shows a rainbow shell so the
+resolved colour stays hidden until the hatch. **Both surprises resolve once,
+at START, and are persisted immediately with a forced save** — a power cut
+during the five-minute hatch brings back the same egg and the same Visitor.
+Verified: resolved to palette 4 / girl, rebooted mid-hatch, came back
+identical.
 
-- `visitorg/grec` — game records (`gamerec.cpp`)
-- `visitorv/recs` — Visit Records, 327 B x 8 = 2624 B (`visitrec.cpp`).
-  VISITREC_VERSION is 2; growing the record discarded v1 history once.
+**Gender is presentation only** and is held to the same standing rule as the
+egg colour: it never reaches an accumulator, a form choice, a care rate, a
+discipline roll or the evolution path.
 
-Visit Records live apart because the pet blob is rewritten every few minutes
-and history must never be at risk from that path.
+**Hatch reveal, then first words.** Three beats, strictly ordered and never
+overlapping: the shell opens; *if* gender was a Surprise a banner reads "It's
+a girl!" for 3.2 s (a banner, not a bubble — bubbles are preemptible and
+cooldown-gated, and this moment must not be refused or talked over); then the
+Visitor's own first words. If there is a previous Visitor, its callback
+follows as a second beat rather than replacing the greeting. If the reveal is
+missed, the Journal's first card opens with it.
 
-## 4. FROZEN — hardware, do not touch
+**Journal "How I grew up" fixed.** `evo_path[]` had one writer, in the
+*offline* path, guarded by `if (p->stage < 4)` — and `STAGE_ADULT` **is** 4.
+So a device left switched on recorded nothing, and even an offline evolution
+could never record the final adult form. `pet_record_form()` now writes from
+every path; old saves are backfilled with what is *knowable* only. Verified
+live: `Baby -> Good Kid -> Rowdy Teen -> Grumpy Adult`, surviving reboots.
+
+**First-person dreams and About Me.** See §4 for the dream rules. "About Me"
+is assembled in the Visitor's own voice from what actually happened —
+personality, favourites, discipline history, one specific funny detail, and
+how it turned out.
+
+**Deferred menu reactions.** `ui_bubble_say()` refuses everything while a
+menu or game is open, which is right for chatter and wrong for a reaction the
+player deliberately triggered — the light switch is on the Care page, so the
+answer was spoken to a covered screen and expired behind the menu.
+`ui_bubble_say_deferred()` queues it and shows it when the pet screen returns,
+**with its duration starting then**. Three fixed slots, oldest dropped,
+120 s expiry, dropped entirely at the farewell.
+
+**Personality-specific dialogue.** All lines moved into `dialogue.cpp`.
+Covers dreams, lights on/off, old messes, waking, being poked asleep,
+mischief, being told off, food, after a game, and first words. Flavoured by
+both traits *and* form. Every selector falls back to a generic pool; a trait
+pool wins 70% of the time, not always. Grumpy is grumbly, never cruel.
+
+**Discipline frequency and history.** Stage-weighted, required order
+Kid > Baby > Teen > Adult (100/85/62/40 %), applied as a multiplier on the
+finished percentage so the ordering survives every other term. Babies are no
+longer excluded. `learned_mischief` is a rolling EMA over how windows were
+*resolved* — corrected pulls toward 0, ignored toward 100 — so early
+discipline genuinely calms a Teen and **nothing is ever locked in**. Measured
+on hardware: a well-raised Kid rolls 9%, a neglected one 27%. Rolls every
+15 s with a randomised 60–180 s gap after each opportunity. A settling hold
+suppresses spontaneous mischief for 2 min after a hatch and 1 min after boot.
+
+## 2b. FROZEN — hardware, do not touch
 
 `include/board_pins.h` carries a FROZEN banner. **Do not change** the V2 pin
 map (QSPI D0–D3 = 4/5/6/7, SCLK 11, CS 12, I2C SDA 15 / SCL 14), the 40 MHz
-QSPI clock, `BSP_LCD_RST = -1`, the 368x448 geometry, the column offset 16, the
-TCA9554 reset sequence, the touch transform, or the IMU axis mapping — unless a
-**reproducible hardware failure** demands it, and then re-run the Phase 1
-diagnostic and update `docs/PHASE1-RESULTS.md` in the same commit.
+QSPI clock, `BSP_LCD_RST = -1`, the 368x448 geometry, the column offset 16,
+the TCA9554 reset sequence, the touch transform, or the IMU axis mapping —
+unless a **reproducible hardware failure** demands it, and then re-run the
+Phase 1 diagnostic and update `docs/PHASE1-RESULTS.md` in the same commit.
 
-Related rules that are easy to break by accident:
+**USB-JTAG: NEVER USE A BARE RTS RESET.** Twice in one session the board
+stopped answering entirely — no console output, and esptool unable to connect
+with any `--before` mode — while still enumerating correctly (Espressif "USB
+JTAG/serial debug unit", 303A:1001, MAC 28:84:85:8D:51:68). Both wedges
+immediately followed a *bare* RTS-based reset on the native USB-Serial/JTAG
+interface: once from a pyserial RTS toggle in a helper script, once from
+`esptool --after hard-reset flash-id` used as a cheap reboot. A reset issued
+as part of a full `pio run -t upload` has never caused it, across roughly
+twenty uploads.
+
+    RULE: never drive DTR/RTS on this board, and never issue a bare esptool
+    reset. Reboot ONLY through a full `pio run -t upload`, or a physical
+    power cycle.
+
+Recovery needs a physical USB unplug/replug; on the first occasion a cable
+swap was also needed, so a marginal cable is a contributing factor. Symptom
+to recognise: the port node exists and opens, `list-ports` shows the right
+MAC, and absolutely nothing comes back.
+
+Other rules that are easy to break by accident:
 
 - **Never full-erase NVS.** Use plain `pio run -t upload`. A factory erase
   destroys the pet. Normal upload only erases the sectors it writes; NVS at
@@ -100,8 +154,92 @@ Related rules that are easy to break by accident:
   rotation" theory was wrong. Do not "simplify" it and do not edit the frozen
   signs in `board_pins.h` instead.
 - `diag_storage_report()` must stay non-destructive. It used to write test
-  values into the one real save slot on every boot, destroying the pet. It now
-  snapshots and restores. Do not undo that.
+  values into the one real save slot on every boot, destroying the pet. It
+  now snapshots and restores. Do not undo that.
+
+## 3. Save schema
+
+**Schema 8. `sizeof(save_t)` = 433 bytes. `SAVE_SIZE_BUDGET` = 448.**
+A `static_assert` in `storage.h` fails the build if the blob overruns, and
+two more prove that schema 7 appended exactly 10 bytes to 6 and schema 8
+exactly 6 bytes to 7 — leave all three.
+
+Phase 9.5 bumped the schema twice: 7 for the identity and dialogue state,
+8 when the ratified dream rules required the sleep period to be persisted.
+
+Migration chain is `v1 -> ... -> v8`, every step "copy the old blob, zero the
+tail", because **every schema has appended only**. Frozen sizes:
+
+    SAVE_V1_SIZE 332   SAVE_V4_SIZE 403   SAVE_V6_SIZE 417
+    SAVE_V2_SIZE 363   SAVE_V5_SIZE 407   SAVE_V7_SIZE 427
+    SAVE_V3_SIZE 397
+
+A wrong frozen size rejects every save of that version as corrupt. This
+happened once: `SAVE_V4_SIZE` was briefly set to 407 (which is schema 5) and
+would have discarded all v4 saves. Recheck the arithmetic if you add a schema.
+
+**A zeroed tail is not always the right migration.** Schema 7 seeds
+`gender_choice` to SURPRISE (the player was never asked), rolls `gender`
+once, and starts `learned_mischief` NEUTRAL — zero would mean "every
+discipline window this Visitor ever had was corrected", an unearned reward
+for a history we do not have. Schema 8's tail genuinely is correctly zero,
+and says so explicitly rather than staying silent.
+
+All four hops (v1, v5, v6, v7 -> v8) have console fixtures and have been run
+on hardware: `V`, `{`, `#`, `"`.
+
+Separate versioned NVS keys, deliberately NOT part of the pet blob:
+
+- `visitorg/grec` — game records (`gamerec.cpp`)
+- `visitorv/recs` — Visit Records, 327 B x 8 = 2624 B (`visitrec.cpp`).
+  VISITREC_VERSION is 2; growing the record discarded v1 history once.
+
+Visit Records live apart because the pet blob is rewritten every few minutes
+and history must never be at risk from that path.
+
+## 4. The dream rules [PHASE 9.5, ratified]
+
+A dream is a property of a **SLEEP PERIOD**, not of a wake-up event, and the
+period is explicit and persisted. Full reasoning in
+`docs/PHASE9.5-REQUIREMENTS.md` §2.
+
+1. **A night dream needs at least 2 h of meaningful sleep**
+   (`DREAM_MIN_NIGHT_SEC`).
+2. **A Baby nap dream needs at least 20 minutes** (`DREAM_MIN_NAP_SEC`).
+3. **Baby naps CAN dream once eligible** — then a `DREAM_NAP_CHANCE_PCT`
+   (35%) roll, so a nap dream stays a find rather than a fixture.
+4. **At most ONE dream per sleep period** (`SLEEPF_DREAMT`).
+5. **Repeated reboots during the same night or nap cannot produce a duplicate
+   dream** — the period's accumulated duration, its nap-ness and its
+   already-dreamt flag are all in the save, so a reboot RESUMES the period
+   rather than starting a new one.
+6. **Eligibility uses actual recorded sleep duration**, never "is the clock
+   currently inside a sleep window". `sleep_accum_sec` accumulates in
+   `care_advance()` — the one shared path — so sleep during an absence counts
+   identically to sleep in front of the child, and a period spanning both is
+   still one period.
+7. **All four thresholds are configurable** in `config.h`:
+   `DREAM_MIN_NIGHT_SEC`, `DREAM_MIN_NAP_SEC`, `DREAM_NAP_CHANCE_PCT`,
+   `DREAM_KEEP`.
+
+Two signals that must not be confused, and were:
+
+- `ctx.asleep` — the Visitor is in bed. Drives the **stat rates**.
+- `ctx.sleep_window` — the **clock** says this is a sleep period. Opens and
+  closes the period.
+
+`sim_catch_up()` deliberately clears `asleep` at the end of every boot ("you
+are here now"), and scripted actions clear it too. Driving the period from it
+made a boot at 2 am close the night and open a second one, so one night
+produced two dreams.
+
+The dream is only RECORDED when the period closes — which can happen
+mid-catch-up with no screen — and `pending_dream` carries it until the live
+tick tells it, deferred so it queues behind any return greeting. **There is
+no dream hook in `main.cpp` or in the console's absence command.**
+
+Console: `^` runs the eligibility rules against constructed periods; `~`
+FORCES a dream and deliberately proves nothing about the rules.
 
 ## 5. Gameplay decisions that are load-bearing
 
@@ -167,41 +305,28 @@ Never add an on-device generator.
 **Farewell tone is the hard rule:** warm, funny, kid-friendly, never
 guilt-heavy. A shorter visit is a consequence, not an accusation.
 
-## 6. Pacing pass - COMPLETE, pending acceptance
+## 6. Pacing pass - COMPLETE, ACCEPTED, tagged
 
-Everything in `PACING-PASS-REQUIREMENTS.md` is implemented, built, flashed and
-tested on hardware. The items this document previously listed as missing are
-all done:
+Everything in `PACING-PASS-REQUIREMENTS.md` is implemented and was accepted on
+hardware; it is commit `496cf0c`, tag `pacing-balance-baseline`. Highlights
+that later work must not undo:
 
-- Variable visit length. `VISIT_LENGTH_DAYS` is gone. `VISIT_DEPART_MIN_DAY`
-  9.0 / `VISIT_DEPART_MAX_DAY` 16.0, mapped continuously.
+- Variable visit length. `VISIT_LENGTH_DAYS` is gone.
+  `VISIT_DEPART_MIN_DAY` 9.0 / `VISIT_DEPART_MAX_DAY` 16.0, mapped
+  continuously through a logistic, not a line.
 - Stay quality derived from `evolve_scores()` - no parallel counters.
 - Departure stability: drift clamp, forward-only notice floor, 36 h lock,
-  hint gating. All four verified, including lock survival across a power cycle.
+  hint gating.
 - Witnessed departure via `SF_FAREWELL_ARM` + `depart_due_ts`.
   **`VISIT_HOLD_MAX_HOURS` (48) is a PRIORITY escalation, not an override.**
   Past it the departure outranks a game, an open menu or a mischief window
   and fires the instant it can - but it NEVER outranks sleep. The farewell is
   witnessed or it does not happen, so the worst case is bounded by the wake
-  clock, not by the cap. `farewell_due()` tests `care_sleep_due()` as well as
-  `p->asleep`, which closes the boot window where `sim_catch_up()` has cleared
-  `asleep` but `care_tick()` has not yet re-asserted bedtime.
-- Farewell stay-length opener; `visit_rec_t` gains `care_band` + `length_band`.
-- Offline bathroom fairness: the meter now PARKS at 95 instead of drifting to
-  99, and the grace window is confirmed to run from boot.
-- Console: `&` GOOD seed, `$` departure report + calibration table,
-  `%` age +24 h, `#` v5 -> v6 migration test, rewritten `@`.
-- Schema 6 (417 B of a 448 B budget), v5 -> v6 migration exercised on hardware
-  with a synthetic fixture.
+  clock, not by the cap.
+- Offline bathroom fairness: the meter PARKS at 95 instead of drifting to 99.
 
-Still open, and deliberately left for the user to decide:
-
-- Displayed-age copy. Stats, Pet Info and the Journal all print `day %d` from
-  the integer `days_alive`. Nothing reads *wrong*, but nothing acknowledges
-  that 1 day = 1 Visitor year either. Not rewritten unilaterally.
-- `care_fast_forward()` still passes `ctx.offline = false`. That is correct
-  for what `T` means (simulated time with the player present); the offline
-  path is exercised by `h` / `H` / `j`.
+The displayed-age question this section used to leave open was answered by
+Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
 
 ## 7. Current tuning values
 
@@ -232,43 +357,60 @@ Still open, and deliberately left for the user to decide:
     GROWTH_SPURT_FRACTION 0.45, baselines 45/52/60/68 g
 
     OFFLINE caps  hunger 55  happiness 30  cleanliness 40  accidents 1
-    EGG_HATCH_SEC 300, 6 palettes + Random
-    EGG swatches 80x60, rows y=180/250, START y=350 (40 px dead space)
+
+    --- PHASE 9.5 ---
+    EGG_HATCH_SEC 300, 6 palettes + SURPRISE (rainbow shell)
+    EGG swatches 80x52, rows y=156/214; gender row 108x52 y=292;
+      START y=370 h=72.  Gaps: 26 px above gender, 26 px dead band before
+      START, 6 px below.  All static_asserted in scr_main.cpp.
+    GENDER_BOY/GIRL/SURPRISE 0/1/2   HATCH_REVEAL_MS 3200  GREET_DELAY 900
+
+    DREAM_MIN_NIGHT_SEC 7200   DREAM_MIN_NAP_SEC 1200
+    DREAM_NAP_CHANCE_PCT 35    DREAM_KEEP 3
+
+    BUBBLE_DEFER_SLOTS 3   _TEXT_MAX 80   _HOLD_MS 120000
+    BUBBLE_RECENT_TEXT_MAX 96   (the no-repeat list owns its strings)
+
+    LIGHTS_REACT_GAP_MS 20000   LIGHTS_BACK_CHANCE_PCT 70
+    POOP_COMMENT_GAP_MS 300000  POOP_COMMENT_CHANCE_PCT 45
+
+    MISCHIEF_W_BABY/KID/TEEN/ADULT   85 / 100 / 62 / 40
+    MISCHIEF_CHECK_FAST_MS 15000     MISCHIEF_BASE_PCT_9_5 14
+    MISCHIEF_GAP_MIN/MAX_MS          60000 / 180000
+    MISCHIEF_SETTLE_HATCH_MS 120000  _BOOT_MS 60000
+    LEARN_START 50.0  LEARN_ALPHA 0.22  LEARN_WEIGHT_PCT 60
 
 ## 8. Known bugs / open issues
 
-1. **Everything after Phase 7 is uncommitted.** Highest risk item here.
-2. **`VISIT_LENGTH_DAYS` 21 is inconsistent with the new lifecycle.** Adult
-   starts at day 6 and the visit is meant to end between 9 and 16.
-3. **Evolution is currently being judged on rescaled accumulators that have
-   not been re-tested.** All 12 forms were reachable at the 24 h half-life;
-   reachability at 12 h — especially Chonky — is UNVERIFIED.
-4. **Age-related copy has not been audited.** Stats, Pet Info, Journal,
-   milestones, farewell, Visit Records may reference the old 3/7/13 pacing.
-5. **The bathroom "next cycle target" log line was not observed** during the
-   last test window. The rate behaved correctly (26%/h -> ~2.7 h target,
-   inside the Baby band) but confirm `care_new_bath_target()` actually fires.
-6. **The snap-to-bed path is unverified on hardware.** The walk path is
+1. **Evolution reachability at the 12 h half-life is still UNVERIFIED**,
+   Chonky especially. All 12 forms were reachable at the old 24 h half-life;
+   nobody has re-run that survey since the rescale. Carried over from the
+   pacing pass - Phase 9.5 did not touch evolution selection.
+2. **The bathroom "next cycle target" log line** now fires and has been
+   observed (`BATHROOM: next cycle target 4.55 awake hours (Adult)`), so the
+   pacing pass's open question here is CLOSED.
+3. **The snap-to-bed path is still unverified on hardware.** The walk path is
    confirmed. To test: set the clock to 20:30 with `N`, then power-cycle; the
    log should say "already under way - straight to bed".
-7. **`care_fast_forward()` passes `ctx.offline = false`,** so the `T` command
-   does not exercise the offline accident path.
-8. **LVGL heap** sits at 15–17 KB steady, 32–35% of the 48 KB `LV_MEM_SIZE`,
-   fragmentation 1–2%. Phase 7's Games page peaked at 59%. No leak found in any
-   subsystem. Do not raise `LV_MEM_SIZE` without measuring a real peak.
+4. **`care_fast_forward()` passes `ctx.offline = false`,** so `T` does not
+   exercise the offline accident path. Correct for what `T` means; the
+   offline path is exercised by `h` / `H` / `j`.
+5. **LVGL heap** sits at ~20-23 KB steady (41-47% of the 48 KB
+   `LV_MEM_SIZE`), peaking ~29 KB with the Journal open, fragmentation 1-7%.
+   That is ~4 KB above the pre-9.5 baseline: the pre-hatch selector objects
+   (seven swatches, six stripes, three gender buttons, the reveal banner) are
+   permanent on `scr_main` and stay resident after the Visitor hatches.
+   Verified stable across repeated page sweeps - it is a fixed cost, not a
+   leak. Do not raise `LV_MEM_SIZE` without measuring a real peak.
+6. **A marginal USB cable** was part of the first serial wedge. See §2b.
 
 ## 9. Exact next steps
 
-1. Ask the user whether to commit the Phase 8/9/pacing work, then do it.
-2. Finish the pacing pass in the order the spec gives: simulation-advance
-   harness and the GOOD seed first (nothing else is testable without them),
-   then stay quality from `evolve_scores()`, then departure stability, then
-   witnessed departure, then farewell/Visit Record fields, then §13.
-3. Re-verify evolution reachability at the 12 h half-life, Chonky especially.
-4. Audit age-related copy (§4) and report; do not rewrite copy unilaterally —
-   the user decides.
-5. Produce the departure calibration table for all four seeds.
-6. Only then, Phase 10.
+1. Nothing is outstanding for Phase 9.5. It is committed and tagged.
+2. Re-verify evolution reachability at the 12 h half-life, Chonky especially
+   (§8.1). This is the oldest open item in the project.
+3. Verify the snap-to-bed path (§8.3).
+4. Only then, and only when asked, Phase 10.
 
 ## 10. Build / flash / test
 
@@ -307,7 +449,14 @@ seconds. Use `~/.platformio/penv/bin/python` (it has pyserial).
     Q/q/E/z  the four games        K  exit game  a  game records
     J  visit records     @  jump to departure  ;  acknowledge  :  start egg
     $  departure report + calibration table   !  age pending departure 24h
-    &  GOOD care seed    %  age +24h    #  v5 -> v6 migration test
+    &  GOOD care seed    %  age +24h
+    V  v1->v8   {  v5->v8   #  v6->v8   "  v7->v8   (migration tests)
+    --- Phase 9.5 ---
+    U  dialogue samples + About Me     I  identity / growth / behaviour
+    ~  FORCE a dream (bypasses rules)  ^  dream ELIGIBILITY rules
+    (  deferred-reaction test          )  old-mess trigger probe
+    }  learned-behaviour recovery demo
+    :  START the egg (90 s)   |  cycle colour   -  cycle gender
     X  reset Visitor     Y  persistence fidelity  y  suspend simulation
     m  LVGL heap         v  pager/pet state       s  storage self-test
     M  menu toggle       P/D  pet screen / Phase 1 test card
@@ -328,7 +477,9 @@ is broken.
   Requirements are recorded in `docs/PHASE10-AUDIO-REQUIREMENTS.md`.
   **Audio is hardware-blocked:** `BSP_AUDIO_VERIFIED` is 0. The ES8311 answers
   at 0x18 but the I2S routing, MCLK and PA enable line are all unverified.
-  A UI hook for volume is reserved on the Pet Info page.
+  UI hooks for Volume, Recalibrate Tilt and Gravity Reactions are reserved
+  on the SETTINGS page (renamed from Pet Info in Phase 9.5) as visible,
+  disabled cards. Phase 10 wires them; 15 bytes of save headroom remain.
 
 ## 12. Working style the user expects
 

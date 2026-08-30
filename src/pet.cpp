@@ -56,6 +56,17 @@ void pet_init(void)
     s.depart_due_ts = 0;
     s.depart_locked = 0;
     s.stay_band     = 0;
+    /* Identity defaults BEFORE anything is picked. Surprise for both, so a
+     * player who presses START without touching a selector still gets a
+     * resolved, persisted identity rather than a silent default. */
+    s.gender          = GENDER_BOY;
+    s.gender_choice   = GENDER_SURPRISE;
+    s.learned_mischief = LEARN_START;
+    memset(s.dream_id, 0, sizeof(s.dream_id));
+    s.dream_n         = 0;
+    s.sleep_accum_sec = 0;
+    s.sleep_flags     = 0;
+    s.pending_dream   = 0;
     evolve_new_personality();
     s.hatch_ts = 0;
     s.last_sim_ts = 0;
@@ -165,6 +176,52 @@ uint8_t pet_apply_stage_for_day(float day)
                       (double)boundary, (double)day);
     }
     return moved;
+}
+
+/* --- the evolution path -------------------------------------------------- */
+
+void pet_record_form(void)
+{
+    if (s.stage < STAGE_BABY || s.stage > STAGE_ADULT) return;
+    const uint8_t slot = (uint8_t)(s.stage - STAGE_BABY);   /* baby -> 0 */
+    if (s.evo_path[slot] == s.form_id) return;              /* already right */
+    const uint8_t was = s.evo_path[slot];
+    s.evo_path[slot] = s.form_id;
+    Serial.printf("EVO PATH: %s slot = %s%s\n", pet_stage_name(s.stage),
+                  forms_name(s.form_id),
+                  was ? " (revised by the mid-adult re-check)" : "");
+}
+
+uint8_t pet_backfill_evo_path(void)
+{
+    if (s.stage < STAGE_BABY) return 0;
+    uint8_t filled = 0;
+
+    /* SLOT 0 NEEDS NO BACKFILL AND NO SENTINEL. FORM_BABY is 0, so a zero in
+     * evo_path[0] is indistinguishable from "never recorded" - and it does
+     * not matter, because every Visitor was a Baby and there is exactly one
+     * Baby form. The slot is therefore CORRECT either way, and readers treat
+     * index 0 as Baby unconditionally rather than testing it for truth. That
+     * ambiguity is only harmless at index 0: for Kid, Teen and Adult, form 0
+     * is not a legal value, so zero genuinely does mean "not recorded". */
+    s.evo_path[0] = FORM_BABY;
+
+    /* The CURRENT stage's slot is knowable - it is the form on screen. */
+    const uint8_t slot = (uint8_t)(s.stage - STAGE_BABY);
+    if (slot > 0 && slot < 4 && !s.evo_path[slot]) {
+        s.evo_path[slot] = s.form_id;
+        filled++;
+    }
+
+    /* Intermediate stages the Visitor demonstrably lived through but whose
+     * form was never recorded stay BLANK on purpose. Inventing one would
+     * mean re-running evolve_pick_form() against today's accumulators and
+     * writing the answer into the past, which is exactly what the migration
+     * rules forbid. The Journal renders a blank as "(not recorded)" and says
+     * so, which is honest; a fabricated Bright Teen would not be. */
+    if (filled)
+        Serial.printf("EVO PATH: backfilled %u slot(s) from an older save\n", filled);
+    return filled;
 }
 
 float pet_weight_norm(void)

@@ -140,6 +140,57 @@ load_result_t storage_load(save_t *out)
      * child a transformation that happened days ago. Stage is recomputed from
      * the clock at boot by pet_apply_stage_for_day(), which walks the
      * boundaries in order and records each against the day it belongs to. */
+    if (cand->schema == 7) {
+        if (cand->struct_size != SAVE_V7_SIZE || stored != SAVE_V7_SIZE)
+            return LOAD_CORRUPT;
+        const uint32_t want = storage_crc32(scratch + CRC_OFFSET,
+                                            SAVE_V7_SIZE - CRC_OFFSET);
+        if (want != cand->crc32) return LOAD_CORRUPT;
+        memset(out, 0, sizeof(save_t));
+        memcpy(out, cand, SAVE_V7_SIZE);
+        out->schema      = SAVE_SCHEMA_VERSION;
+        out->struct_size = sizeof(save_t);
+        /* A ZEROED TAIL IS EXACTLY RIGHT HERE, for once: no sleep period is
+         * open, none has accumulated, and nothing is waiting to be said. The
+         * next bedtime opens the first tracked period. Deliberately noted
+         * rather than left silent - every other schema-7 field needed
+         * seeding, and "this one genuinely does not" is worth stating. */
+        memcpy(&s_shadow, out, sizeof(save_t));
+        s_shadow_valid = true;
+        return LOAD_MIGRATED;
+    }
+
+    if (cand->schema == 6) {
+        if (cand->struct_size != SAVE_V6_SIZE || stored != SAVE_V6_SIZE)
+            return LOAD_CORRUPT;
+        const uint32_t want = storage_crc32(scratch + CRC_OFFSET,
+                                            SAVE_V6_SIZE - CRC_OFFSET);
+        if (want != cand->crc32) return LOAD_CORRUPT;
+        memset(out, 0, sizeof(save_t));
+        memcpy(out, cand, SAVE_V6_SIZE);
+        out->schema      = SAVE_SCHEMA_VERSION;
+        out->struct_size = sizeof(save_t);
+        /* A zeroed tail reads as gender BOY / choice BOY, learned_mischief
+         * 0.0 and no dreams. Two of those three are wrong for a Visitor that
+         * predates them, so they are set explicitly rather than left at the
+         * memset value:
+         *   - gender_choice becomes SURPRISE, because the player never made
+         *     a choice, and gender is rolled ONCE here and then persisted
+         *     like any other resolved surprise. Leaving it at BOY would tell
+         *     every existing Visitor's owner something the game never asked
+         *     them and never showed them;
+         *   - learned_mischief starts NEUTRAL. Zero would mean "every
+         *     discipline window this Visitor ever had was corrected", which
+         *     is an unearned reward for a history we do not have.
+         * A zero dream ring is genuinely correct: no dreams have happened. */
+        out->gender_choice   = GENDER_SURPRISE;
+        out->gender          = (uint8_t)(esp_random() & 1u);
+        out->learned_mischief = LEARN_START;
+        memcpy(&s_shadow, out, sizeof(save_t));
+        s_shadow_valid = true;
+        return LOAD_MIGRATED;
+    }
+
     if (cand->schema == 5) {
         if (cand->struct_size != SAVE_V5_SIZE || stored != SAVE_V5_SIZE)
             return LOAD_CORRUPT;
@@ -150,6 +201,9 @@ load_result_t storage_load(save_t *out)
         memcpy(out, cand, SAVE_V5_SIZE);
         out->schema      = SAVE_SCHEMA_VERSION;
         out->struct_size = sizeof(save_t);
+        out->gender_choice   = GENDER_SURPRISE;
+        out->gender          = (uint8_t)(esp_random() & 1u);
+        out->learned_mischief = LEARN_START;
         /* depart_day 0 means "never projected". The first re-evaluation
          * seeds it from the care history the save already carries, and the
          * minimum-notice floor stops a save that is ALREADY past day 9 from
@@ -171,6 +225,9 @@ load_result_t storage_load(save_t *out)
         memcpy(out, cand, SAVE_V4_SIZE);
         out->schema      = SAVE_SCHEMA_VERSION;
         out->struct_size = sizeof(save_t);
+        out->gender_choice   = GENDER_SURPRISE;
+        out->gender          = (uint8_t)(esp_random() & 1u);
+        out->learned_mischief = LEARN_START;
         /* bath_target_h zero means "draw one on the next cycle" - correct
          * for a save that predates randomised targets. */
         memcpy(&s_shadow, out, sizeof(save_t));
@@ -188,6 +245,9 @@ load_result_t storage_load(save_t *out)
         memcpy(out, cand, SAVE_V3_SIZE);
         out->schema      = SAVE_SCHEMA_VERSION;
         out->struct_size = sizeof(save_t);
+        out->gender_choice   = GENDER_SURPRISE;
+        out->gender          = (uint8_t)(esp_random() & 1u);
+        out->learned_mischief = LEARN_START;
         /* zeroed egg fields mean "no egg pending", which is right for a save
          * whose Visitor had already hatched */
         memcpy(&s_shadow, out, sizeof(save_t));
@@ -206,6 +266,9 @@ load_result_t storage_load(save_t *out)
         memcpy(out, cand, SAVE_V2_SIZE);
         out->schema      = SAVE_SCHEMA_VERSION;
         out->struct_size = sizeof(save_t);
+        out->gender_choice   = GENDER_SURPRISE;
+        out->gender          = (uint8_t)(esp_random() & 1u);
+        out->learned_mischief = LEARN_START;
         /* New fields default to zero, which is the correct v2 meaning: no
          * personality recorded yet, no evolution path, nothing to announce.
          * pet_init() will roll a personality if these are still blank. */
@@ -228,7 +291,7 @@ load_result_t storage_load(save_t *out)
 
         memset(out, 0, sizeof(save_t));
         memcpy(out, cand, SAVE_V1_SIZE);
-        out->schema      = SAVE_SCHEMA_VERSION;   /* v1 -> ... -> v6 in one hop: every step
+        out->schema      = SAVE_SCHEMA_VERSION;   /* v1 -> ... -> v7 in one hop: every step
                                     * are "append and zero", so the result is
                                     * identical to running them separately */
         out->struct_size = sizeof(save_t);
@@ -237,6 +300,9 @@ load_result_t storage_load(save_t *out)
         out->bathroom = 0;
         out->accidents = 0;
         memset(out->mess_type, 0, sizeof(out->mess_type));
+        out->gender_choice    = GENDER_SURPRISE;
+        out->gender           = (uint8_t)(esp_random() & 1u);
+        out->learned_mischief = LEARN_START;
 
         memcpy(&s_shadow, out, sizeof(save_t));
         s_shadow_valid = true;
@@ -336,6 +402,124 @@ bool storage_write_fake_v5(uint32_t hatch_ts, float hunger, float care_happy,
         Serial.printf("fake v5 write: %u of %u bytes\n", (unsigned)w,
                       (unsigned)SAVE_V5_SIZE);
     return w == SAVE_V5_SIZE;
+}
+
+bool storage_write_fake_v7(uint32_t hatch_ts, float hunger, float care_happy,
+                           uint8_t form_id, uint8_t trait_a, uint8_t trait_b)
+{
+    if (!s_open) return false;
+
+    /* v7 is a strict byte PREFIX of v8, so a v8-shaped struct truncated to
+     * SAVE_V7_SIZE IS a v7 blob. It carries the schema-7 tail - a resolved
+     * Surprise identity, a learned-behaviour value and a dream ring - because
+     * "the Phase 9.5 state survives the hop" is what this one has to prove. */
+    uint8_t buf[SAVE_V7_SIZE];
+    memset(buf, 0, sizeof(buf));
+    save_t *v = (save_t *)buf;
+
+    v->schema      = 7;
+    v->struct_size = SAVE_V7_SIZE;
+    v->hatch_ts    = hatch_ts;
+    v->last_sim_ts = hatch_ts;
+    v->hunger      = hunger;
+    v->happiness   = 70.0f;
+    v->cleanliness = 65.0f;
+    v->energy      = 60.0f;
+    v->discipline  = 55.0f;
+    v->weight_g    = 61.0f;
+    v->stage       = 4;            /* Adult */
+    v->form_id     = form_id;
+    v->days_alive_max = 11;
+    v->care_happy  = care_happy;
+    v->care_fed    = 72.0f;
+    v->care_clean  = 68.0f;
+    v->care_sleep  = 70.0f;
+    v->care_discipline = 60.0f;
+    v->personality_trait_1 = trait_a;
+    v->personality_trait_2 = trait_b;
+    v->evo_path[0] = 0; v->evo_path[1] = 1;
+    v->evo_path[2] = 3; v->evo_path[3] = form_id;
+    v->acc_hours   = 240.0f;
+    v->evo_announce = 0;
+    v->journal[0].ts = hatch_ts;
+    v->journal[0].type = 0;        /* JM_HATCHED */
+    v->bath_target_h = 4.25f;
+    v->depart_day    = 12.5f;
+    v->depart_locked = 1;
+    v->egg_color     = 2;
+    v->egg_choice    = EGG_PALETTE_COUNT;   /* Surprise, already resolved */
+    /* --- the schema-7 tail, which must come through untouched --- */
+    v->gender          = GENDER_GIRL;
+    v->gender_choice   = GENDER_SURPRISE;
+    v->learned_mischief = 73.5f;
+    v->dream_id[0] = 4; v->dream_id[1] = 11; v->dream_id[2] = 2;
+    v->dream_n     = 3;
+
+    v->crc32 = storage_crc32(buf + CRC_OFFSET, SAVE_V7_SIZE - CRC_OFFSET);
+
+    const size_t w = s_prefs.putBytes(NVS_KEY_SAVE, buf, SAVE_V7_SIZE);
+    s_shadow_valid = false;
+    if (w != SAVE_V7_SIZE)
+        Serial.printf("fake v7 write: %u of %u bytes\n", (unsigned)w,
+                      (unsigned)SAVE_V7_SIZE);
+    return w == SAVE_V7_SIZE;
+}
+
+bool storage_write_fake_v6(uint32_t hatch_ts, float hunger, float care_happy,
+                           uint8_t form_id, uint8_t trait_a, uint8_t trait_b)
+{
+    if (!s_open) return false;
+
+    /* Same trick as the v5 fixture: v6 is a strict byte PREFIX of v7, so a
+     * v7-shaped struct truncated to SAVE_V6_SIZE IS a v6 blob. Hand-packing
+     * would let the fixture drift away from the real layout, and a fixture
+     * that is subtly not what it claims proves nothing. */
+    uint8_t buf[SAVE_V6_SIZE];
+    memset(buf, 0, sizeof(buf));
+    save_t *v = (save_t *)buf;
+
+    v->schema      = 6;
+    v->struct_size = SAVE_V6_SIZE;
+    v->hatch_ts    = hatch_ts;
+    v->last_sim_ts = hatch_ts;
+    v->hunger      = hunger;
+    v->happiness   = 70.0f;
+    v->cleanliness = 65.0f;
+    v->energy      = 60.0f;
+    v->discipline  = 55.0f;
+    v->weight_g    = 61.0f;
+    v->stage       = 4;            /* Adult */
+    v->form_id     = form_id;
+    v->days_alive_max = 11;
+    v->care_happy  = care_happy;
+    v->care_fed    = 72.0f;
+    v->care_clean  = 68.0f;
+    v->care_sleep  = 70.0f;
+    v->care_discipline = 60.0f;
+    v->personality_trait_1 = trait_a;
+    v->personality_trait_2 = trait_b;
+    v->evo_path[0] = 0; v->evo_path[1] = 1;      /* Baby, Good Kid,        */
+    v->evo_path[2] = 3; v->evo_path[3] = form_id;/* Bright Teen, this      */
+    v->acc_hours   = 240.0f;
+    v->evo_announce = 0;           /* nothing outstanding - must STAY 0 */
+    v->journal[0].ts = hatch_ts;
+    v->journal[0].type = 0;        /* JM_HATCHED */
+    v->bath_target_h = 4.25f;
+    /* A LOCKED, already-projected departure: the whole point of testing this
+     * hop is proving the pacing state survives it intact. */
+    v->depart_day    = 12.5f;
+    v->depart_locked = 1;
+    v->egg_color     = 2;
+    v->egg_choice    = 2;
+
+    v->crc32 = storage_crc32(buf + CRC_OFFSET, SAVE_V6_SIZE - CRC_OFFSET);
+
+    const size_t w = s_prefs.putBytes(NVS_KEY_SAVE, buf, SAVE_V6_SIZE);
+    s_shadow_valid = false;
+    if (w != SAVE_V6_SIZE)
+        Serial.printf("fake v6 write: %u of %u bytes\n", (unsigned)w,
+                      (unsigned)SAVE_V6_SIZE);
+    return w == SAVE_V6_SIZE;
 }
 
 bool storage_write_fake_v1(float hunger, float weight_g, uint16_t days)

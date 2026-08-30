@@ -75,7 +75,7 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out)
          * forgotten-lights mechanic. */
         const bool lights = care_lights_on();
 
-        sim_ctx_t ctx = { asleep, lights, true };
+        sim_ctx_t ctx = { asleep, lights, true, asleep, nap };
         care_advance(step * 1000UL, &ctx, &b);
 
         if (asleep) {
@@ -109,7 +109,12 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out)
             p->evo_announce = 1;    /* shown once on return, not now */
             s_rep.evolved = true;
         }
-        if (p->stage < 4) p->evo_path[p->stage - (p->stage > 0 ? 1 : 0)] = p->form_id;
+        /* Record the form against the stage it belongs to. This used to be
+         * an inline index expression guarded by `p->stage < 4`, which
+         * silently excluded STAGE_ADULT (4) - so the final form of every
+         * Visitor was missing from its own history. pet_record_form() knows
+         * the slot mapping in one place. */
+        pet_record_form();
         evolve_on_stage_entered(p->stage, p->days_alive);
     } else if (p->stage == STAGE_ADULT && pet_age_days() >= visit_recheck_day()) {
         /* Was a hardcoded "day 18" - a fixed fraction of the old fixed 21-day
@@ -122,6 +127,7 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out)
             p->form_id = f;
             p->evo_announce = 1;
             s_rep.evolved = true;
+            pet_record_form();      /* the glow-up REVISES the adult slot */
         }
     }
 

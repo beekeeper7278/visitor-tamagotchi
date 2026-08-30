@@ -35,6 +35,7 @@
 #include "journal.h"
 #include "visitrec.h"
 #include "farewell.h"
+#include "dialogue.h"
 
 static void imu_timer_cb(lv_timer_t *t)  { (void)t; diag_imu_tick();  }
 static void boot_timer_cb(lv_timer_t *t) { (void)t; diag_boot_tick(); btn_tick(); }
@@ -162,8 +163,14 @@ void setup()
             sim_print_report();
             const char *g = sim_return_greeting(&rep);
             if (g) ui_bubble_say(BUBBLE_T0_CRITICAL, g);
+            /* NO DREAM HOOK HERE ANY MORE, on purpose. An absence that
+             * covered a night is just a sleep period that closed while
+             * nobody was looking, and care_advance() already accumulated and
+             * closed it during the catch-up above - recording the dream in
+             * pending_dream. The first live tick tells it, deferred, so it
+             * queues behind this greeting. One rule, one place. */
         } else if (!rtc_trusted()) {
-            Serial.println("Clock not trusted - no catch-up. Set the time on Pet Info.");
+            Serial.println("Clock not trusted - no catch-up. Set the time on Settings.");
         }
         persist_print_state("SIMULATED");
         evolve_check_announce();   /* one-time post-offline reveal */

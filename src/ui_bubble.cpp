@@ -23,9 +23,27 @@ static bool     s_had_any     = false;
 static uint32_t s_last_tier[BUBBLE_TIER_COUNT];
 static bool     s_had_tier[BUBBLE_TIER_COUNT];
 
-/* Recent strings, for the "no repeat within the last 5" rule. Pointers are
- * enough: every line is a string literal with static storage. */
-static const char *s_recent[BUBBLE_NO_REPEAT_DEPTH];
+/* Recent strings, for the "no repeat within the last 5" rule.
+ *
+ * THESE ARE COPIES, and they have to be. The original stored bare pointers
+ * on the reasoning that every line is a string literal with static storage.
+ * That was true until the deferred queue arrived, whose slots are reusable
+ * buffers - and the result was not the harmless "one line might repeat" I
+ * assumed when I wrote that trade-off down. It was the opposite and it was
+ * much worse:
+ *
+ *   1. a deferred line is released, and remember() stores a pointer INTO
+ *      that queue slot;
+ *   2. the slot is freed and later reused for a completely different line;
+ *   3. recently_said() now compares the NEW text against a pointer that
+ *      aliases the same buffer, so it always matches itself;
+ *   4. the line is refused as a repeat it never was - permanently, because
+ *      the alias cannot age out while the slot holds it.
+ *
+ * Observed on hardware: a queued lights reaction was released, then the very
+ * next lights reaction was refused forever with "said within last 5" and
+ * retried until it expired. Copies remove the class, not just this case. */
+static char        s_recent[BUBBLE_NO_REPEAT_DEPTH][BUBBLE_RECENT_TEXT_MAX];
 static uint8_t     s_recent_n = 0;
 
 static uint32_t s_n_accept = 0, s_n_suppress = 0;
@@ -77,22 +95,31 @@ void ui_bubble_create(lv_obj_t *parent)
     memset(s_last_tier, 0, sizeof(s_last_tier));
     memset(s_had_tier, 0, sizeof(s_had_tier));
     memset(s_recent, 0, sizeof(s_recent));
+    s_recent_n = 0;
 }
 
 static bool recently_said(const char *txt)
 {
     for (uint8_t i = 0; i < s_recent_n; i++)
-        if (s_recent[i] && strcmp(s_recent[i], txt) == 0) return true;
+        if (s_recent[i][0] && strncmp(s_recent[i], txt, BUBBLE_RECENT_TEXT_MAX - 1) == 0)
+            return true;
     return false;
+}
+
+static void keep(char *dst, const char *txt)
+{
+    strncpy(dst, txt, BUBBLE_RECENT_TEXT_MAX - 1);
+    dst[BUBBLE_RECENT_TEXT_MAX - 1] = 0;
 }
 
 static void remember(const char *txt)
 {
     if (s_recent_n < BUBBLE_NO_REPEAT_DEPTH) {
-        s_recent[s_recent_n++] = txt;
+        keep(s_recent[s_recent_n++], txt);
     } else {
-        for (uint8_t i = 1; i < BUBBLE_NO_REPEAT_DEPTH; i++) s_recent[i - 1] = s_recent[i];
-        s_recent[BUBBLE_NO_REPEAT_DEPTH - 1] = txt;
+        for (uint8_t i = 1; i < BUBBLE_NO_REPEAT_DEPTH; i++)
+            memcpy(s_recent[i - 1], s_recent[i], BUBBLE_RECENT_TEXT_MAX);
+        keep(s_recent[BUBBLE_NO_REPEAT_DEPTH - 1], txt);
     }
 }
 
@@ -304,9 +331,149 @@ void ui_bubble_test_show(const char *text)
                       (int)(x + w), (int)(y + h), BSP_LCD_W, BSP_LCD_H);
 }
 
+/* --- the deferred queue [PHASE 9.5] --------------------------------------
+ * Text is COPIED rather than held by pointer. Most callers pass string
+ * literals, but a dream line or a composed reaction is a stack buffer, and a
+ * queue of dangling pointers is exactly the kind of bug that only shows up
+ * once, on hardware, weeks later.
+ *
+ * (The no-repeat list does hold a pointer into a slot, so a slot reused
+ * before the entry ages out of s_recent[] can make the repeat check compare
+ * against different text. That affects only whether one line is allowed to
+ * repeat - never memory safety - and it is the cheaper side of the trade
+ * against a second copy of every string.) */
+typedef struct {
+    bool          used;
+    bubble_tier_t tier;
+    uint32_t      queued_ms;
+    char          text[BUBBLE_DEFER_TEXT_MAX];
+} defer_t;
+
+static defer_t s_defer[BUBBLE_DEFER_SLOTS];
+
+uint8_t ui_bubble_deferred_count(void)
+{
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < BUBBLE_DEFER_SLOTS; i++) if (s_defer[i].used) n++;
+    return n;
+}
+
+void ui_bubble_drop_deferred(void)
+{
+    for (uint8_t i = 0; i < BUBBLE_DEFER_SLOTS; i++) s_defer[i].used = false;
+}
+
+static void defer_push(bubble_tier_t tier, const char *text)
+{
+    const uint32_t now = millis();
+    int slot = -1;
+
+    for (uint8_t i = 0; i < BUBBLE_DEFER_SLOTS; i++)
+        if (!s_defer[i].used) { slot = i; break; }
+
+    if (slot < 0) {
+        /* Full: drop the OLDEST. A held reaction that has already waited
+         * longest is the one least likely to still make sense. */
+        uint32_t oldest = 0; slot = 0;
+        for (uint8_t i = 0; i < BUBBLE_DEFER_SLOTS; i++) {
+            const uint32_t age = now - s_defer[i].queued_ms;
+            if (age >= oldest) { oldest = age; slot = i; }
+        }
+        Serial.printf("BUBBLE DEFER  queue full - dropping \"%s\"\n",
+                      s_defer[slot].text);
+    }
+
+    s_defer[slot].used      = true;
+    s_defer[slot].tier      = tier;
+    s_defer[slot].queued_ms = now;
+    strncpy(s_defer[slot].text, text, BUBBLE_DEFER_TEXT_MAX - 1);
+    s_defer[slot].text[BUBBLE_DEFER_TEXT_MAX - 1] = 0;
+
+    Serial.printf("BUBBLE DEFER  %-11s \"%s\"  (held until the pet screen is back, %u queued)\n",
+                  ui_bubble_tier_name(tier), s_defer[slot].text,
+                  ui_bubble_deferred_count());
+}
+
+bool ui_bubble_say_deferred(bubble_tier_t tier, const char *text)
+{
+    if (tier >= BUBBLE_TIER_COUNT || !text || !*text) return false;
+    if (!s_suppressed && ui_bubble_say(tier, text)) return true;
+    /* Not shown. If the screen is covered the player never had a chance to
+     * see it, so hold it. If the screen was visible and it was merely
+     * refused by a cooldown, hold it too - a reaction the player triggered
+     * deliberately is worth a few seconds' wait. */
+    defer_push(tier, text);
+    return false;
+}
+
+/* Oldest first, and only when there is a clear screen to show it on.
+ * Starting the duration HERE is the whole point of the mechanism.
+ *
+ * IT MUST NOT SIMPLY RETRY EVERY TICK. The first version called
+ * ui_bubble_say() from every 10 Hz animation frame and let it refuse, which
+ * did work - the bubble appeared the moment the cooldown expired - but it
+ * cost two things that only showed up on the device:
+ *
+ *   - one "BUBBLE SUPPRESS ... (global cooldown, 4116 ms left)" line every
+ *     100 ms for the whole wait, which is a serial firehose on a build where
+ *     Serial.setTxTimeoutMs(0) means the log is the only diagnostic;
+ *   - every refusal increments the suppressed-bubble counter, so a single
+ *     deferred line inflated the statistic the S stress test measures by
+ *     eighty. The queue was not leaking, but the numbers used to PROVE it
+ *     was not leaking were being corrupted by the check itself.
+ *
+ * So the cooldowns are consulted BEFORE asking, using the same state
+ * ui_bubble_say() uses, and anything else that refuses (the no-repeat rule)
+ * is retried at DEFER_RETRY_MS rather than at frame rate. */
+#define DEFER_RETRY_MS 500
+
+static uint32_t s_defer_next_try;
+
+static void defer_flush(void)
+{
+    if (s_suppressed || s_visible) return;
+    const uint32_t now = millis();
+
+    /* Expiry runs at frame rate regardless of the retry pacing: a held
+     * reaction that has aged out should stop existing on time. */
+    int best = -1; uint32_t best_age = 0;
+    for (uint8_t i = 0; i < BUBBLE_DEFER_SLOTS; i++) {
+        if (!s_defer[i].used) continue;
+        const uint32_t age = now - s_defer[i].queued_ms;
+        if (age > BUBBLE_DEFER_HOLD_MS) {
+            Serial.printf("BUBBLE DEFER  expired unshown: \"%s\"\n", s_defer[i].text);
+            s_defer[i].used = false;
+            continue;
+        }
+        if (best < 0 || age >= best_age) { best = i; best_age = age; }
+    }
+    if (best < 0) return;
+
+    /* Silent waits, not logged refusals. */
+    const bubble_tier_t tier = s_defer[best].tier;
+    if (s_had_any && (now - s_last_any) < BUBBLE_GLOBAL_CD_MS) return;
+    if (s_had_tier[tier] && (now - s_last_tier[tier]) < TIER_CD[tier]) return;
+    if (s_defer_next_try && (int32_t)(now - s_defer_next_try) < 0) return;
+    s_defer_next_try = now + DEFER_RETRY_MS;
+
+    if (ui_bubble_say(tier, s_defer[best].text)) {
+        Serial.printf("BUBBLE DEFER  released after %lu ms\n", (unsigned long)best_age);
+    } else {
+        /* Both cooldowns were already clear, so the only thing left that can
+         * refuse is the no-repeat rule - and that will not clear until five
+         * OTHER bubbles have been said. Retrying it every DEFER_RETRY_MS for
+         * the whole hold window would be 240 pointless log lines and 240
+         * pointless increments of the suppressed counter, so it is dropped
+         * once, loudly, instead. */
+        Serial.printf("BUBBLE DEFER  dropped after %lu ms - the Visitor just said it\n",
+                      (unsigned long)best_age);
+    }
+    s_defer[best].used = false;
+}
+
 void ui_bubble_tick(void)
 {
-    if (!s_visible) return;
+    if (!s_visible) { defer_flush(); return; }
     if ((int32_t)(millis() - s_expires_at) >= 0) { hide_now(); return; }
     reposition();      /* follow the pet while it walks */
 }

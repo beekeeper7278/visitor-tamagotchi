@@ -300,3 +300,21 @@ static inline const char *forms_name(uint8_t id)
         default:                  return "?";
     }
 }
+
+/* The SAME form, named for a place where the tier is not already obvious.
+ * The six adult rows are stored as bare adjectives ("Chonky") because that is
+ * how the evolution tables and the console reports read best - but a Journal
+ * line listing "Baby -> Good Kid -> Bright Teen -> Chonky" loses the last
+ * rung of the ladder. Only the adults differ from forms_name(). */
+static inline const char *forms_long_name(uint8_t id)
+{
+    switch (id) {
+        case FORM_ADULT_BEST:     return "Best Adult";
+        case FORM_ADULT_SWEET:    return "Sweet Adult";
+        case FORM_ADULT_PLAYFUL:  return "Playful Adult";
+        case FORM_ADULT_CHONKY:   return "Chonky Adult";
+        case FORM_ADULT_GRUMPY:   return "Grumpy Adult";
+        case FORM_ADULT_SCRUFFY:  return "Scruffy Adult";
+        default:                  return forms_name(id);
+    }
+}
