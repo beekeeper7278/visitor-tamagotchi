@@ -30,6 +30,11 @@
 #include "persist.h"
 #include "gamerec.h"
 #include "games.h"
+#include "discipline.h"
+#include "evolve.h"
+#include "journal.h"
+#include "visitrec.h"
+#include "farewell.h"
 
 static void imu_timer_cb(lv_timer_t *t)  { (void)t; diag_imu_tick();  }
 static void boot_timer_cb(lv_timer_t *t) { (void)t; diag_boot_tick(); btn_tick(); }
@@ -44,8 +49,11 @@ static void sim_timer_cb(lv_timer_t *t)
 {
     (void)t;
     care_tick();
+    discipline_tick();
+    if (farewell_due()) farewell_begin();
     persist_tick();
     scr_main_hud_refresh();
+    scr_main_egg_refresh();
 
     /* Feed real pet state into the renderer's live modifiers, so weight and
      * cleanliness actually change how the pet looks rather than only how the
@@ -66,6 +74,7 @@ static void anim_timer_cb(lv_timer_t *t)
     ui_pet_tick();
     ui_bubble_tick();
     care_anim_tick();
+    scr_main_sleep_fx();
 }
 
 static void heartbeat_cb(lv_timer_t *t)
@@ -107,6 +116,8 @@ void setup()
     btn_init(menu_toggle);
     rtc_begin();
     gamerec_begin();
+    visitrec_begin();
+    discipline_init();
 
     ui_diag_create();
     scr_main_create();
@@ -155,6 +166,7 @@ void setup()
             Serial.println("Clock not trusted - no catch-up. Set the time on Pet Info.");
         }
         persist_print_state("SIMULATED");
+        evolve_check_announce();   /* one-time post-offline reveal */
         pet_mutable()->last_sim_ts = rtc_now();
         if (rtc_trusted()) persist_save(true);   /* anchor the new baseline */
     }

@@ -5,6 +5,9 @@
 #include "forms.h"
 #include <string.h>
 #include "pet.h"
+#include "evolve.h"
+#include "journal.h"
+#include "rtc.h"
 
 static pet_state_t s;
 
@@ -21,13 +24,35 @@ void pet_init(void)
     s.weight_g    = 45.0f;
     s.stage       = 0;
     s.form_id     = FORM_BABY;
-    s.days_alive  = 1;
+    s.days_alive  = 0;   /* a newborn is day 0, not day 1 */
+    s.days_alive_max = 0;
     s.asleep      = false;
     s.bathroom    = 0.0f;
     s.mess_count  = 0;
     s.meals = s.cakes_eaten = s.times_dirty = s.accidents = 0;
     s.lights_forgotten = 0;
     memset(s.stage_day, 0, sizeof(s.stage_day));
+    s.care_happy = s.care_fed = s.care_clean = 60.0f;
+    s.care_sleep = s.care_discipline = 50.0f;
+    s.nutrition = 0.0f;
+    s.acc_hours = 0.0f;
+    s.ignored_requests = s.games_played = s.junk_meals = 0;
+    s.disc_correct = s.disc_unfair = 0;
+    s.stage_start_day = 0;
+    s.trait_a = s.trait_b = 0;
+    memset(s.food_count, 0, sizeof(s.food_count));
+    s.mischief = 20;
+    s.evo_announce = 0;
+    memset(s.evo_path, 0, sizeof(s.evo_path));
+    s.disc_opportunities = s.disc_ignored = 0;
+    /* Arrive as an egg: stage EGG, no hatch timestamp yet. The colour is
+     * rolled now so the player sees it immediately. */
+    s.stage        = STAGE_EGG;
+    s.egg_color    = (uint8_t)random(0, EGG_PALETTE_COUNT);
+    s.egg_choice   = EGG_PALETTE_COUNT;    /* defaults to Random */
+    s.bath_target_h = 0.0f;                /* drawn on the first cycle */
+    s.egg_hatch_ts = 0;
+    evolve_new_personality();
     s.hatch_ts = 0;
     s.last_sim_ts = 0;
 }
@@ -79,7 +104,25 @@ const char *pet_stage_name(uint8_t stage)
     }
 }
 
-static uint8_t stage_for_day(uint16_t day)
+float pet_age_days(void)
+{
+    if (!s.hatch_ts || !rtc_trusted()) return 0.0f;
+    const uint32_t now = rtc_now();
+    if (!now || now <= s.hatch_ts) return 0.0f;
+    return (float)(now - s.hatch_ts) / 86400.0f;
+}
+
+void pet_refresh_age(void)
+{
+    const float d = pet_age_days();
+    const uint16_t whole = (uint16_t)d;
+    s.days_alive = whole;
+    /* Monotonic: a clock correction can never make the Visitor younger. */
+    if (whole > s.days_alive_max) s.days_alive_max = whole;
+    if (s.days_alive < s.days_alive_max) s.days_alive = s.days_alive_max;
+}
+
+static uint8_t stage_for_day(float day)
 {
     if (day >= STAGE_DAY_ADULT) return STAGE_ADULT;
     if (day >= STAGE_DAY_TEEN)  return STAGE_TEEN;
@@ -87,7 +130,7 @@ static uint8_t stage_for_day(uint16_t day)
     return STAGE_BABY;
 }
 
-uint8_t pet_apply_stage_for_day(uint16_t day)
+uint8_t pet_apply_stage_for_day(float day)
 {
     /* Without a hatch timestamp there is no real calendar age, so the
      * Visitor stays an Egg rather than aging off an untrusted clock. */
@@ -108,14 +151,14 @@ uint8_t pet_apply_stage_for_day(uint16_t day)
         const uint8_t from = s.stage;
         s.stage++;
         moved++;
-        const uint16_t boundary =
+        const float boundary =
             (s.stage == STAGE_KID)   ? STAGE_DAY_KID   :
             (s.stage == STAGE_TEEN)  ? STAGE_DAY_TEEN  :
-            (s.stage == STAGE_ADULT) ? STAGE_DAY_ADULT : 0;
-        s.stage_day[s.stage] = boundary;
-        Serial.printf("STAGE: %s -> %s (on day %u; noticed on day %u)\n",
+            (s.stage == STAGE_ADULT) ? STAGE_DAY_ADULT : 0.0f;
+        s.stage_day[s.stage] = (uint16_t)boundary;
+        Serial.printf("STAGE: %s -> %s (on day %.2f; noticed on day %.2f)\n",
                       pet_stage_name(from), pet_stage_name(s.stage),
-                      boundary, day);
+                      (double)boundary, (double)day);
     }
     return moved;
 }

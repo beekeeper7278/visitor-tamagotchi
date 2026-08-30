@@ -86,9 +86,9 @@ enum {
     FORM_KID_GOOD,              /* 2 kids                                   */
     FORM_KID_MISCHIEF,
 
-    FORM_TEEN_1,                /* 3 teens                                  */
-    FORM_TEEN_2,
-    FORM_TEEN_3,
+    FORM_TEEN_BRIGHT,           /* 3 teens                                  */
+    FORM_TEEN_MELLOW,
+    FORM_TEEN_ROWDY,
 
     FORM_ADULT_BEST,            /* 6 adults, ranked best -> worst           */
     FORM_ADULT_SWEET,
@@ -137,10 +137,136 @@ static const pet_form_t PET_FORMS[FORM_COUNT] = {
         .deco_mask = 0,
     },
 
-    /* ---- NOT POPULATED - Phase 11 (Evolution) --------------------------
-     * body_w == 0 is the "unpopulated" sentinel. Deliberately left blank
-     * rather than filled with invented values that would look plausible,
-     * ship, and never be revisited. */
+
+    /* ---- FORM_KID_GOOD -------------------------------------------------
+     * The lineage colour carries forward from the Baby; a Good Kid is the
+     * Baby grown slightly taller and brighter. */
+    {
+        .body_w = 112, .body_h = 104, .body_round = 46, .body_squash = 4,
+        .head_ratio = 0,
+        .c_body = 0x7FD8C0, .c_belly = 0xB4EEDF, .c_accent = 0xFF9EB5, .c_eye = 0x16161E,
+        .eye_style = EYE_OVAL, .eye_spacing = 42, .eye_size = 17,
+        .mouth_style = MOUTH_SMILE, .brow_style = BROW_NONE,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 1, .deco_mask = 0,
+    },
+
+    /* ---- FORM_KID_MISCHIEF ---------------------------------------------
+     * Cheeky rather than nasty: a smirk and a raised brow. Low discipline is
+     * meant to read as funny, never as a pet you should feel bad about. */
+    {
+        .body_w = 110, .body_h = 102, .body_round = 44, .body_squash = 6,
+        .head_ratio = 0,
+        .c_body = 0x9FD86B, .c_belly = 0xCBEBA4, .c_accent = 0xFFB347, .c_eye = 0x16161E,
+        .eye_style = EYE_DOT, .eye_spacing = 44, .eye_size = 16,
+        .mouth_style = MOUTH_SMIRK, .brow_style = BROW_ANGRY,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 1, .deco_mask = 0,
+    },
+
+    /* ---- FORM_TEEN_BRIGHT ---------------------------------------------- */
+    {
+        .body_w = 116, .body_h = 122, .body_round = 40, .body_squash = -6,
+        .head_ratio = 0,
+        .c_body = 0x74D0E8, .c_belly = 0xB2E7F5, .c_accent = 0xFFC7DA, .c_eye = 0x16161E,
+        .eye_style = EYE_STAR, .eye_spacing = 44, .eye_size = 16,
+        .mouth_style = MOUTH_OPEN_HAPPY, .brow_style = BROW_NONE,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 1, .deco_mask = 0,
+    },
+
+    /* ---- FORM_TEEN_MELLOW ---------------------------------------------- */
+    {
+        .body_w = 118, .body_h = 118, .body_round = 44, .body_squash = 0,
+        .head_ratio = 0,
+        .c_body = 0x8FBFE8, .c_belly = 0xC4DCF3, .c_accent = 0xFFB6C8, .c_eye = 0x16161E,
+        .eye_style = EYE_OVAL, .eye_spacing = 44, .eye_size = 17,
+        .mouth_style = MOUTH_SMILE, .brow_style = BROW_NONE,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 1, .deco_mask = 0,
+    },
+
+    /* ---- FORM_TEEN_ROWDY ----------------------------------------------- */
+    {
+        .body_w = 120, .body_h = 116, .body_round = 36, .body_squash = 8,
+        .head_ratio = 0,
+        .c_body = 0xE8A05A, .c_belly = 0xF5CFA6, .c_accent = 0xFF7B6B, .c_eye = 0x16161E,
+        .eye_style = EYE_ANGRY_SLANT, .eye_spacing = 46, .eye_size = 17,
+        .mouth_style = MOUTH_TOOTHY, .brow_style = BROW_ANGRY,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 0, .deco_mask = 0,
+    },
+
+    /* ---- FORM_ADULT_BEST ----------------------------------------------- */
+    {
+        .body_w = 128, .body_h = 134, .body_round = 42, .body_squash = 0,
+        .head_ratio = 0,
+        .c_body = 0x7FE8C8, .c_belly = 0xC2F5E4, .c_accent = 0xFFD1E0, .c_eye = 0x16161E,
+        .eye_style = EYE_STAR, .eye_spacing = 46, .eye_size = 17,
+        .mouth_style = MOUTH_OPEN_HAPPY, .brow_style = BROW_NONE,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 1, .deco_mask = DECO_SPARKLE,
+    },
+
+    /* ---- FORM_ADULT_SWEET ---------------------------------------------- */
+    {
+        .body_w = 126, .body_h = 128, .body_round = 46, .body_squash = 2,
+        .head_ratio = 0,
+        .c_body = 0xFFB6C8, .c_belly = 0xFFD9E3, .c_accent = 0xFF8FA8, .c_eye = 0x16161E,
+        .eye_style = EYE_OVAL, .eye_spacing = 44, .eye_size = 18,
+        .mouth_style = MOUTH_SMILE, .brow_style = BROW_NONE,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 1, .deco_mask = 0,
+    },
+
+    /* ---- FORM_ADULT_PLAYFUL -------------------------------------------- */
+    {
+        .body_w = 124, .body_h = 124, .body_round = 44, .body_squash = 4,
+        .head_ratio = 0,
+        .c_body = 0xFFD24A, .c_belly = 0xFFE9A8, .c_accent = 0xFF9E5A, .c_eye = 0x16161E,
+        .eye_style = EYE_DOT, .eye_spacing = 46, .eye_size = 17,
+        .mouth_style = MOUTH_OPEN_HAPPY, .brow_style = BROW_NONE,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 1, .deco_mask = 0,
+    },
+
+    /* ---- FORM_ADULT_CHONKY ---------------------------------------------
+     * Widest form. body_w is held at 116 on purpose: the renderer multiplies
+     * width by the squash (+26 -> x1.13) and then by up to 1.2 for weight,
+     * so 116 x 1.13 x 1.2 = 157 - just inside the 160 px pet box. A larger
+     * base here would clip at maximum weight, which is exactly the state a
+     * Chonky is most likely to be in. */
+    {
+        .body_w = 116, .body_h = 116, .body_round = 50, .body_squash = 26,
+        .head_ratio = 0,
+        .c_body = 0xF2B07A, .c_belly = 0xFAD8B8, .c_accent = 0xFF9EB5, .c_eye = 0x16161E,
+        .eye_style = EYE_OVAL, .eye_spacing = 46, .eye_size = 16,
+        .mouth_style = MOUTH_SMILE, .brow_style = BROW_NONE,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 1, .deco_mask = DECO_CRUMBS,
+    },
+
+    /* ---- FORM_ADULT_GRUMPY ---------------------------------------------- */
+    {
+        .body_w = 124, .body_h = 122, .body_round = 38, .body_squash = 0,
+        .head_ratio = 0,
+        .c_body = 0x9AA0B8, .c_belly = 0xC6CBDC, .c_accent = 0xB78A9A, .c_eye = 0x16161E,
+        .eye_style = EYE_ANGRY_SLANT, .eye_spacing = 44, .eye_size = 17,
+        .mouth_style = MOUTH_FROWN, .brow_style = BROW_ANGRY,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 0, .deco_mask = 0,
+    },
+
+    /* ---- FORM_ADULT_SCRUFFY --------------------------------------------- */
+    {
+        .body_w = 122, .body_h = 120, .body_round = 40, .body_squash = -4,
+        .head_ratio = 0,
+        .c_body = 0xB0A184, .c_belly = 0xD3C8B0, .c_accent = 0x9AB07A, .c_eye = 0x16161E,
+        .eye_style = EYE_SLEEPY, .eye_spacing = 44, .eye_size = 17,
+        .mouth_style = MOUTH_WOBBLE, .brow_style = BROW_WORRIED,
+        .ear_style = EAR_NONE, .limb_style = LIMB_NUBS, .tail_style = TAIL_NONE,
+        .cheek_blush = 0, .deco_mask = DECO_STINK,
+    },
 };
 
 static inline bool forms_is_populated(uint8_t id)
@@ -160,17 +286,17 @@ static inline const char *forms_name(uint8_t id)
 {
     switch (id) {
         case FORM_BABY:           return "Baby";
-        case FORM_KID_GOOD:       return "Kid/Good";
-        case FORM_KID_MISCHIEF:   return "Kid/Mischief";
-        case FORM_TEEN_1:         return "Teen/1";
-        case FORM_TEEN_2:         return "Teen/2";
-        case FORM_TEEN_3:         return "Teen/3";
-        case FORM_ADULT_BEST:     return "Adult/Best";
-        case FORM_ADULT_SWEET:    return "Adult/Sweet";
-        case FORM_ADULT_PLAYFUL:  return "Adult/Playful";
-        case FORM_ADULT_CHONKY:   return "Adult/Chonky";
-        case FORM_ADULT_GRUMPY:   return "Adult/Grumpy";
-        case FORM_ADULT_SCRUFFY:  return "Adult/Scruffy";
+        case FORM_KID_GOOD:       return "Good Kid";
+        case FORM_KID_MISCHIEF:   return "Mischief Kid";
+        case FORM_TEEN_BRIGHT:    return "Bright Teen";
+        case FORM_TEEN_MELLOW:    return "Mellow Teen";
+        case FORM_TEEN_ROWDY:     return "Rowdy Teen";
+        case FORM_ADULT_BEST:     return "Best";
+        case FORM_ADULT_SWEET:    return "Sweet";
+        case FORM_ADULT_PLAYFUL:  return "Playful";
+        case FORM_ADULT_CHONKY:   return "Chonky";
+        case FORM_ADULT_GRUMPY:   return "Grumpy";
+        case FORM_ADULT_SCRUFFY:  return "Scruffy";
         default:                  return "?";
     }
 }

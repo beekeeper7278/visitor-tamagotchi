@@ -33,7 +33,8 @@ typedef struct {
     float    weight_g;
     uint8_t  stage;          /* 0 baby .. */
     uint8_t  form_id;
-    uint16_t days_alive;
+    uint16_t days_alive;       /* derived cache of pet_age_days()        */
+    uint16_t days_alive_max;   /* monotonic floor                        */
     bool     asleep;
 
     /* --- 3B --- */
@@ -48,6 +49,35 @@ typedef struct {
      * configured boundary, not the day the transition was noticed, so an
      * offline gap that spans several stages still yields correct history. */
     uint16_t stage_day[5];
+
+    /* --- 8: care-history accumulators [SPEC section 3] ------------------
+     * Exponential moving averages with a 24 h half-life, sampled hourly.
+     * The half-life IS the recovery guarantee: two days of perfect care
+     * lifts a bottomed-out 20 to 80, and one bad day cannot drag a perfect
+     * 100 below 60. Evolution therefore reads recent care, not ancient
+     * mistakes. */
+    float    care_happy, care_fed, care_clean, care_sleep, care_discipline;
+    float    nutrition;              /* 100 x junk/meals; 0 is best        */
+    float    acc_hours;              /* hours of sample accumulated        */
+
+    /* per-stage counters, reset at each transition */
+    uint16_t ignored_requests, games_played, junk_meals;
+    uint16_t disc_correct, disc_unfair;
+    uint16_t stage_start_day;
+
+    /* --- personality + favourites --- */
+    uint8_t  trait_a, trait_b;       /* PERS_*                             */
+    uint16_t food_count[3];          /* burger / fruit / cake              */
+    uint8_t  mischief;               /* hidden tendency, 0..100            */
+    uint8_t  evo_announce;           /* a form change waiting to be SHOWN  */
+    uint8_t  evo_path[4];            /* form at baby / kid / teen / adult  */
+    uint16_t disc_opportunities, disc_ignored;
+
+    /* --- the egg --- */
+    uint8_t  egg_color;      /* RESOLVED palette index; cosmetic only     */
+    uint8_t  egg_choice;     /* what the player picked; 6 = Random        */
+    float    bath_target_h;  /* awake hours for THIS cycle; persisted     */
+    uint32_t egg_hatch_ts;   /* unix seconds when it hatches; 0 = not started */
 } pet_state_t;
 
 void pet_init(void);
@@ -64,7 +94,23 @@ float pet_weight_norm(void);
  * boundary crossed in order and logging each - so an offline gap that spans
  * Baby to Teen records both transitions rather than jumping silently. The
  * stage only; the FORM is Phase 8. Returns the number of transitions made. */
-uint8_t pet_apply_stage_for_day(uint16_t day);
+uint8_t pet_apply_stage_for_day(float day);
+
+/* AGE IS DERIVED FROM THE CLOCK, never accumulated.
+ *
+ * It used to be advanced only in sim_catch_up() as
+ *     days_alive += elapsed_sec / 86400
+ * which had three separate faults: care_tick() never aged the Visitor at all,
+ * so a device left switched on never changed stage; the integer division
+ * returned 0 for any absence under 24 h, so twelve two-hour gaps advanced the
+ * age by nothing; and hatch_ts was stored but never used to derive anything.
+ *
+ * Returns 0 when there is no hatch timestamp or the clock is untrusted. */
+float pet_age_days(void);
+
+/* Refresh the days_alive cache and days_alive_max from the clock. Cheap;
+ * called from the 1 s tick. */
+void  pet_refresh_age(void);
 
 /* Mutable access for the care mechanics. Deliberately not part of the public
  * read-only surface that ui uses: ui reads pet, only care writes it. */

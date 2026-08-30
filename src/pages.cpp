@@ -14,6 +14,11 @@
 #include "persist.h"
 #include "setclock.h"
 #include "games.h"
+#include "discipline.h"
+#include "evolve.h"
+#include "journal.h"
+#include "visitrec.h"
+#include "rtc.h"
 #include "gamerec.h"
 
 /* --- shared page furniture ---------------------------------------------- */
@@ -214,6 +219,13 @@ static void care_lights_cb(lv_event_t *e)
     menu_rebuild_page();          /* so the label reflects the new state */
 }
 
+static void care_disc_cb(lv_event_t *e)
+{
+    (void)e;
+    if (menu_swipe_active()) return;
+    discipline_press();
+}
+
 static void care_clean_cb(lv_event_t *e)    { (void)e; if (menu_swipe_active()) return; care_clean(); }
 
 static void build_care(lv_obj_t *p)
@@ -234,8 +246,12 @@ static void build_care(lv_obj_t *p)
     b = card(p, lb, 36, 264, W, H, care_lights_on() ? 0xF2C14E : 0x6B5A2E, true);
     lv_obj_add_event_cb(b, care_lights_cb, LV_EVENT_CLICKED, NULL);
 
-    /* Discipline belongs to the stat model that owns it. */
-    card(p, "Discipline", 36, 348, W, H, 0x8FCB9B, false);
+    /* Live from Milestone 8. The label says whether there is actually
+     * something to tell off, so the player is not guessing. */
+    b = card(p, discipline_window_open() ? "Discipline!" : "Discipline",
+             36, 348, W, H,
+             discipline_window_open() ? 0xF2A05A : 0x8FCB9B, true);
+    lv_obj_add_event_cb(b, care_disc_cb, LV_EVENT_CLICKED, NULL);
 }
 
 /* --- 5. Clock / Pet Info ------------------------------------------------- */
@@ -291,13 +307,146 @@ static void build_clock(lv_obj_t *p)
 
 /* --- 6. Journal ---------------------------------------------------------- */
 
+/* A titled card. Sections rather than one wall of text - the Journal is a
+ * keepsake a child browses, not a debug dump. */
+static lv_obj_t *jcard(lv_obj_t *par, const char *title_txt, lv_coord_t *y,
+                       uint32_t accent)
+{
+    lv_obj_t *c = lv_obj_create(par);
+    lv_obj_remove_style_all(c);
+    lv_obj_set_width(c, BSP_LCD_W - 40);
+    lv_obj_set_height(c, LV_SIZE_CONTENT);
+    lv_obj_set_pos(c, 20, *y);
+    lv_obj_set_style_radius(c, 14, 0);
+    lv_obj_set_style_bg_color(c, lv_color_hex(0x14141C), 0);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(c, 12, 0);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *t = lv_label_create(c);
+    lv_label_set_text(t, title_txt);
+    lv_obj_set_style_text_color(t, lv_color_hex(accent), 0);
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, 0, 0);
+    return c;
+}
+
+static void jbody(lv_obj_t *card, const char *txt)
+{
+    lv_obj_t *l = lv_label_create(card);
+    lv_label_set_text(l, txt);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(l, BSP_LCD_W - 40 - 24);
+    lv_obj_set_style_text_color(l, lv_color_hex(0xD0D4DC), 0);
+    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, 22);
+}
+
 static void build_journal(lv_obj_t *p)
 {
+    const pet_state_t *st = pet_get();
+    const gamerec_t *g = gamerec_get();
+    char b[320];
+
     title(p, "Journal");
-    note(p, "The Journal scrolls VERTICALLY inside this page so it never "
-            "fights the horizontal pager. Contents arrive with the journal "
-            "phase: milestones, Visit Records, favourite food and game, and "
-            "the farewell note.", 100);
+
+    /* THE SCROLLER. Vertical only: the pager owns horizontal, and giving
+     * this LV_DIR_VER means LVGL will not fight it for a sideways drag. */
+    lv_obj_t *sc = lv_obj_create(p);
+    lv_obj_remove_style_all(sc);
+    lv_obj_set_size(sc, BSP_LCD_W, BSP_LCD_H - 74);
+    lv_obj_set_pos(sc, 0, 70);
+    lv_obj_set_style_bg_opa(sc, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(sc, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(sc, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(sc, LV_SCROLLBAR_MODE_AUTO);
+    /* Events still bubble so a clearly-horizontal swipe reaches the pager. */
+    lv_obj_add_flag(sc, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    lv_coord_t y = 0;
+    lv_obj_t *c;
+
+    /* --- who --- */
+    c = jcard(sc, "This Visitor", &y, 0x60D0A0);
+    char when[32] = "not recorded";
+    if (st->hatch_ts) rtc_format(st->hatch_ts, when, sizeof(when));
+    snprintf(b, sizeof(b),
+             "%s  (%s)\nDay %u on Earth\nArrived %.10s\nA bit %s, a bit %s",
+             forms_name(st->form_id), pet_stage_name(st->stage), st->days_alive,
+             when, evolve_trait_name(st->trait_a), evolve_trait_name(st->trait_b));
+    jbody(c, b);
+    lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
+
+    /* --- favourites --- */
+    c = jcard(sc, "Favourites", &y, 0xF2C14E);
+    snprintf(b, sizeof(b), "Food: %s\nGame: %s",
+             evolve_food_name(evolve_favourite_food()),
+             g->total_games ? gamerec_name(gamerec_favorite()) : "still deciding");
+    jbody(c, b);
+    lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
+
+    /* --- how it grew --- */
+    c = jcard(sc, "How I grew", &y, 0xA894EE);
+    int n = snprintf(b, sizeof(b), "Baby");
+    for (uint8_t i = 1; i < 4; i++)
+        if (st->evo_path[i])
+            n += snprintf(b + n, sizeof(b) - n, " -> %s", forms_name(st->evo_path[i]));
+    if (st->stage <= STAGE_BABY) snprintf(b + n, sizeof(b) - n, "\n(still little!)");
+    jbody(c, b);
+    lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
+
+    /* --- games --- */
+    c = jcard(sc, "Games", &y, 0xFF8A75);
+    n = snprintf(b, sizeof(b), "%u games played\n", g->total_games);
+    for (uint8_t i = 0; i < GAME_COUNT; i++)
+        if (g->plays[i])
+            n += snprintf(b + n, sizeof(b) - n, "%s: best %u\n",
+                          gamerec_name(i), g->best[i]);
+    if (g->maze_best_ms)
+        snprintf(b + n, sizeof(b) - n, "Maze best %lu.%02lus",
+                 (unsigned long)(g->maze_best_ms / 1000),
+                 (unsigned long)((g->maze_best_ms % 1000) / 10));
+    jbody(c, b);
+    lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
+
+    /* --- the funny bits, only when there is something to say --- */
+    n = 0; b[0] = 0;
+    if (st->cakes_eaten)      n += snprintf(b + n, sizeof(b) - n, "Cakes eaten: %u\n", st->cakes_eaten);
+    if (st->accidents)        n += snprintf(b + n, sizeof(b) - n, "Little accidents: %u\n", st->accidents);
+    if (st->lights_forgotten) n += snprintf(b + n, sizeof(b) - n, "Nights with the light left on: %u\n", st->lights_forgotten);
+    if (st->disc_opportunities) n += snprintf(b + n, sizeof(b) - n, "Mischief: %u (told off %u)\n", st->disc_opportunities, st->disc_correct);
+    if (n) {
+        c = jcard(sc, "Notable", &y, 0x7FA8E8);
+        jbody(c, b);
+        lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
+    }
+
+    /* --- milestones, newest first --- */
+    if (journal_count()) {
+        c = jcard(sc, "Milestones", &y, 0xFFB6C8);
+        n = 0; b[0] = 0;
+        for (uint8_t i = 0; i < journal_count() && i < 8; i++) {
+            char line[96];
+            if (!journal_line(i, line, sizeof(line))) break;
+            n += snprintf(b + n, sizeof(b) - n, "%s\n", line);
+            if (n >= (int)sizeof(b) - 96) break;
+        }
+        jbody(c, b);
+        lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
+    }
+
+    /* --- who came before --- */
+    if (visitrec_count()) {
+        c = jcard(sc, "Visitors before", &y, 0x9AA6C4);
+        n = 0; b[0] = 0;
+        for (uint8_t i = 0; i < visitrec_count() && i < 4; i++) {
+            const visit_rec_t *r = visitrec_at(i);
+            if (!r) continue;
+            n += snprintf(b + n, sizeof(b) - n, "%s - %u days, loved %s\n",
+                          forms_name(r->final_form), r->days,
+                          evolve_food_name(r->fav_food));
+        }
+        jbody(c, b);
+        lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
+    }
 }
 
 /* --- dispatch ------------------------------------------------------------ */

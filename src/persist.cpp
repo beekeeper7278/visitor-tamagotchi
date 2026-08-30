@@ -9,6 +9,9 @@
 #include "care.h"
 #include "rtc.h"
 #include "persist.h"
+#include "evolve.h"
+#include "journal.h"
+#include "ui_pet.h"
 
 static bool     s_dirty;
 static uint32_t s_last_try_ms;
@@ -45,6 +48,34 @@ static void pack(save_t *b)
     b->lights_forgotten = p->lights_forgotten;
 
     /* --- schema 2 --- */
+    b->care_happy      = p->care_happy;
+    b->care_fed        = p->care_fed;
+    b->care_clean      = p->care_clean;
+    b->care_sleep      = p->care_sleep;
+    b->care_discipline = p->care_discipline;
+    b->nutrition       = p->nutrition;
+    b->ignored_requests = p->ignored_requests;
+    b->games_played     = p->games_played;
+    b->junk_meals       = p->junk_meals;
+    b->disc_correct     = p->disc_correct;
+    b->disc_unfair      = p->disc_unfair;
+    b->personality_trait_1 = p->trait_a;
+    b->personality_trait_2 = p->trait_b;
+    b->mischief_tendency   = p->mischief;
+    for (uint8_t i = 0; i < 3; i++) b->food_history[i] = p->food_count[i];
+    b->stage_start_day     = p->stage_start_day;
+    for (uint8_t i = 0; i < 5; i++) b->stage_day_entered[i] = p->stage_day[i];
+    b->acc_hours           = p->acc_hours;
+    b->evo_announce        = p->evo_announce;
+    for (uint8_t i = 0; i < 4; i++) b->evo_path[i] = p->evo_path[i];
+    b->disc_opportunities  = p->disc_opportunities;
+    b->disc_ignored        = p->disc_ignored;
+    b->egg_color           = p->egg_color;
+    b->egg_choice          = p->egg_choice;
+    b->egg_hatch_ts        = p->egg_hatch_ts;
+    b->bath_target_h       = p->bath_target_h;
+    journal_store(b);
+
     b->bathroom  = (uint8_t)(p->bathroom + 0.5f);
     b->accidents = p->accidents;
 
@@ -91,6 +122,34 @@ static void unpack(const save_t *b)
     p->times_dirty      = b->times_dirty;
     p->lights_forgotten = b->lights_forgotten;
 
+    p->care_happy      = b->care_happy;
+    p->care_fed        = b->care_fed;
+    p->care_clean      = b->care_clean;
+    p->care_sleep      = b->care_sleep;
+    p->care_discipline = b->care_discipline;
+    p->nutrition       = b->nutrition;
+    p->ignored_requests = b->ignored_requests;
+    p->games_played     = b->games_played;
+    p->junk_meals       = b->junk_meals;
+    p->disc_correct     = b->disc_correct;
+    p->disc_unfair      = b->disc_unfair;
+    p->trait_a  = b->personality_trait_1;
+    p->trait_b  = b->personality_trait_2;
+    p->mischief = b->mischief_tendency;
+    for (uint8_t i = 0; i < 3; i++) p->food_count[i] = b->food_history[i];
+    p->stage_start_day = b->stage_start_day;
+    for (uint8_t i = 0; i < 5; i++) p->stage_day[i] = b->stage_day_entered[i];
+    p->acc_hours    = b->acc_hours;
+    p->evo_announce = b->evo_announce;
+    for (uint8_t i = 0; i < 4; i++) p->evo_path[i] = b->evo_path[i];
+    p->disc_opportunities = b->disc_opportunities;
+    p->disc_ignored       = b->disc_ignored;
+    p->egg_color          = b->egg_color;
+    p->egg_choice         = b->egg_choice;
+    p->egg_hatch_ts       = b->egg_hatch_ts;
+    p->bath_target_h      = b->bath_target_h;
+    journal_load(b);
+
     p->bathroom  = (float)b->bathroom;
     p->accidents = b->accidents;
 
@@ -115,7 +174,50 @@ load_result_t persist_load(void)
 {
     save_t b;
     const load_result_t r = storage_load(&b);
-    if (r == LOAD_OK || r == LOAD_MIGRATED) unpack(&b);
+    if (r == LOAD_OK || r == LOAD_MIGRATED) {
+        unpack(&b);
+        /* Validate the personality rather than assuming it. A save migrated
+         * up from v1/v2 has zeroed fields, which read as trait 0 twice and a
+         * mischief of 0 - "playful and playful", incapable of mischief.
+         *
+         * Reroll ONLY when the stored values are genuinely invalid. A valid
+         * personality must survive every reboot untouched, or the Visitor
+         * quietly becomes a different character each time it is switched on. */
+        pet_state_t *p = pet_mutable();
+
+        /* A dev save may already be past the NEW 1/3/6 boundaries. Recompute
+         * the stage from age, but NEVER re-announce: evo_announce is cleared
+         * and evo_path is left alone, because the forms it already holds are
+         * the Visitor's actual past. Re-running evolve_pick_form() here would
+         * rewrite history from today's accumulators. */
+        if (r == LOAD_MIGRATED && p->hatch_ts) {
+            const uint8_t was = p->stage;
+            const uint8_t moved = pet_apply_stage_for_day(pet_age_days());
+            if (moved) {
+                p->evo_announce = 0;      /* migration is not an event */
+                Serial.printf("MIGRATION: stage recomputed %s -> %s under the "
+                              "new boundaries (no replay)\n",
+                              pet_stage_name(was), pet_stage_name(p->stage));
+            }
+        }
+
+        const bool bad_range  = (p->trait_a >= PERS_COUNT) || (p->trait_b >= PERS_COUNT);
+        const bool bad_same   = (p->trait_a == p->trait_b);
+        const bool bad_misch  = (p->mischief > 100);
+        if (bad_range || bad_same || bad_misch) {
+            Serial.printf("SAVE: personality invalid (%s%s%s) - rolling a new one\n",
+                          bad_range ? "trait out of range " : "",
+                          bad_same  ? "traits identical "   : "",
+                          bad_misch ? "mischief out of range" : "");
+            evolve_new_personality();
+            ui_pet_set_baby_palette(p->egg_color);
+        } else {
+            ui_pet_set_baby_palette(p->egg_color);
+            Serial.printf("SAVE: personality kept - %s + %s (mischief %u)\n",
+                          evolve_trait_name(p->trait_a),
+                          evolve_trait_name(p->trait_b), p->mischief);
+        }
+    }
     Serial.printf("SAVE load: %s\n", storage_load_result_str(r));
     if (r == LOAD_MIGRATED)
         Serial.println("  schema 1 -> 2 migrated: bathroom and per-mess records added");

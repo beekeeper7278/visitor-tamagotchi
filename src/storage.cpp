@@ -128,6 +128,62 @@ load_result_t storage_load(save_t *out)
 
     /* --- migration chain: v(n) -> v(n+1) ---------------------------------- */
 
+    /* The chain runs v1 -> v2 -> v3, each step a prefix copy plus a zeroed
+     * tail, because every schema has appended only. A v1 save therefore
+     * reaches v3 through both steps rather than needing its own path. */
+    if (cand->schema == 4) {
+        if (cand->struct_size != SAVE_V4_SIZE || stored != SAVE_V4_SIZE)
+            return LOAD_CORRUPT;
+        const uint32_t want = storage_crc32(scratch + CRC_OFFSET,
+                                            SAVE_V4_SIZE - CRC_OFFSET);
+        if (want != cand->crc32) return LOAD_CORRUPT;
+        memset(out, 0, sizeof(save_t));
+        memcpy(out, cand, SAVE_V4_SIZE);
+        out->schema      = 5;
+        out->struct_size = sizeof(save_t);
+        /* bath_target_h zero means "draw one on the next cycle" - correct
+         * for a save that predates randomised targets. */
+        memcpy(&s_shadow, out, sizeof(save_t));
+        s_shadow_valid = true;
+        return LOAD_MIGRATED;
+    }
+
+    if (cand->schema == 3) {
+        if (cand->struct_size != SAVE_V3_SIZE || stored != SAVE_V3_SIZE)
+            return LOAD_CORRUPT;
+        const uint32_t want = storage_crc32(scratch + CRC_OFFSET,
+                                            SAVE_V3_SIZE - CRC_OFFSET);
+        if (want != cand->crc32) return LOAD_CORRUPT;
+        memset(out, 0, sizeof(save_t));
+        memcpy(out, cand, SAVE_V3_SIZE);
+        out->schema      = 5;
+        out->struct_size = sizeof(save_t);
+        /* zeroed egg fields mean "no egg pending", which is right for a save
+         * whose Visitor had already hatched */
+        memcpy(&s_shadow, out, sizeof(save_t));
+        s_shadow_valid = true;
+        return LOAD_MIGRATED;
+    }
+
+    if (cand->schema == 2) {
+        if (cand->struct_size != SAVE_V2_SIZE || stored != SAVE_V2_SIZE)
+            return LOAD_CORRUPT;
+        const uint32_t want = storage_crc32(scratch + CRC_OFFSET,
+                                            SAVE_V2_SIZE - CRC_OFFSET);
+        if (want != cand->crc32) return LOAD_CORRUPT;
+
+        memset(out, 0, sizeof(save_t));
+        memcpy(out, cand, SAVE_V2_SIZE);
+        out->schema      = 5;
+        out->struct_size = sizeof(save_t);
+        /* New fields default to zero, which is the correct v2 meaning: no
+         * personality recorded yet, no evolution path, nothing to announce.
+         * pet_init() will roll a personality if these are still blank. */
+        memcpy(&s_shadow, out, sizeof(save_t));
+        s_shadow_valid = true;
+        return LOAD_MIGRATED;
+    }
+
     if (cand->schema == 1) {
         /* v1 is a strict byte prefix of v2 (schema 2 fields were appended),
          * so the migration is a prefix copy plus a zeroed tail. Validate the
@@ -142,7 +198,9 @@ load_result_t storage_load(save_t *out)
 
         memset(out, 0, sizeof(save_t));
         memcpy(out, cand, SAVE_V1_SIZE);
-        out->schema      = 2;
+        out->schema      = 5;      /* v1 -> ... -> v5 in one hop: both steps
+                                    * are "append and zero", so the result is
+                                    * identical to running them separately */
         out->struct_size = sizeof(save_t);
         /* New v2 fields are already zero, which is the correct v1 meaning:
          * no bathroom need recorded, and no individually-tracked messes. */

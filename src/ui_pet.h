@@ -32,6 +32,7 @@ typedef enum {
     PET_ANIM_REFUSE,     /* head shake "no" - won't eat / can't finish      */
     PET_ANIM_CLEANING,   /* joins in: a busy little side-to-side scoot      */
     PET_ANIM_SLEEPING,   /* settled in bed: sleepy eyes, slow breathing     */
+    PET_ANIM_EVOLVING,   /* centre, shrink, flash, grow into the new form   */
     PET_ANIM_COUNT
 } pet_anim_t;
 
@@ -89,9 +90,32 @@ void ui_pet_set_urgency(float u);
  * the pet can never be sent off-screen. */
 void ui_pet_walk_to(lv_coord_t x, lv_coord_t y);
 
+/* Place instantly, without a walk and without changing the animation. Used
+ * when bedtime is already underway and strolling over would be wrong. */
+void ui_pet_place(lv_coord_t x, lv_coord_t y);
+
 /* Gate autonomous wandering, so a scripted walk is not fighting a random
  * one. Always re-enable it when the script finishes. */
 void ui_pet_set_wander(bool on);
+
+/* Run the transformation. The form switch happens at the flash, so the old
+ * shape is never seen morphing into the new one. Calls the done-callback
+ * when it finishes and returns to idle. */
+void ui_pet_evolve_to(uint8_t new_form);
+bool ui_pet_evolving(void);
+
+/* Egg mode: the shell is drawn instead of the Visitor. Colour is cosmetic. */
+void ui_pet_set_egg(bool on, uint8_t palette);
+bool ui_pet_is_egg(void);
+
+/* 0..1 progress toward hatching. Drives how often the egg twitches - rare
+ * at the start, almost constant just before it opens. */
+void ui_pet_set_egg_progress(float p);
+
+/* The Baby inherits its colour from the shell it hatched out of. Pass -1 for
+ * no tint (the form table's own colours). Appearance ONLY - nothing here
+ * reaches the evolution accumulators. */
+void ui_pet_set_baby_palette(int idx);
 
 /* Centre of the pet in screen coords - the bubble anchors to this. */
 void ui_pet_anchor(lv_coord_t *x, lv_coord_t *top_y);

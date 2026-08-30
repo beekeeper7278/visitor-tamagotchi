@@ -52,6 +52,7 @@ typedef struct {
     bool     accident;
     uint32_t sleep_chunks, nap_chunks, awake_chunks, lights_on_sleep_chunks;
     uint8_t  messes_kept;
+    bool     evolved;        /* a form change happened during catch-up */
     sim_budget_t budget;
 } sim_report_t;
 

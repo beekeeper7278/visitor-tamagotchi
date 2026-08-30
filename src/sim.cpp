@@ -9,6 +9,8 @@
 #include "rtc.h"
 #include "sim.h"
 #include "gamerec.h"
+#include "evolve.h"
+#include "forms.h"
 
 static sim_report_t s_rep;
 
@@ -86,12 +88,38 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out)
     }
 
     /* Age advances by the FULL elapsed interval - never capped. */
-    p->days_alive = (uint16_t)(p->days_alive + s_rep.elapsed_sec / 86400UL);
+    /* Age comes from the clock, not from adding up absences: the old
+     * accumulation truncated every gap under 24 h to zero. */
+    pet_refresh_age();
     p->asleep = false;      /* you are here now, so it is awake */
 
     /* Every stage boundary the absence crossed, in order. */
-    if (pet_apply_stage_for_day(p->days_alive) > 0)
+    if (pet_apply_stage_for_day(pet_age_days()) > 0) {
         gamerec_on_stage_change(p->stage);   /* fresh bests for a new tier */
+        /* Pick the form for the stage just ENTERED, from the history as it
+         * stood. Never recomputed on a later boot: once chosen it is the
+         * Visitor's actual past. */
+        const uint8_t f = evolve_pick_form(p->stage);
+        if (f != p->form_id) {
+            Serial.printf("EVOLVE: %s -> %s (stage %s)\n",
+                          forms_name(p->form_id), forms_name(f),
+                          pet_stage_name(p->stage));
+            p->form_id = f;
+            p->evo_announce = 1;    /* shown once on return, not now */
+            s_rep.evolved = true;
+        }
+        if (p->stage < 4) p->evo_path[p->stage - (p->stage > 0 ? 1 : 0)] = p->form_id;
+        evolve_on_stage_entered(p->stage, p->days_alive);
+    } else if (p->stage == STAGE_ADULT && p->days_alive >= 18) {
+        const uint8_t f = evolve_midadult_recheck();
+        if (f != p->form_id) {
+            Serial.printf("EVOLVE: glow-up %s -> %s\n",
+                          forms_name(p->form_id), forms_name(f));
+            p->form_id = f;
+            p->evo_announce = 1;
+            s_rep.evolved = true;
+        }
+    }
 
     /* One "you left the lights on" mark per absence, not one per chunk -
      * otherwise a single forgetful night would score hundreds. */

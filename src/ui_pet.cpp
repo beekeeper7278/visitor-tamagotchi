@@ -36,9 +36,35 @@ static lv_obj_t *o_brow_l, *o_brow_r;
 static lv_obj_t *o_mouth_a, *o_mouth_b;       /* arcs                       */
 static lv_obj_t *o_mouth_fill, *o_mouth_teeth;
 static lv_obj_t *o_spark[3];
+static lv_obj_t *o_egg, *o_egg_dot[EGG_DOTS];
+static bool      s_egg_on;
+static uint8_t   s_egg_pal;
+static float     s_egg_prog;
+static int       s_baby_pal = -1;
+
+/* Softer, lighter relatives of each shell colour - a Baby that clearly came
+ * out of THAT egg. Only the Baby is tinted: the later forms carry designed
+ * colours that mean something (Scruffy is drab, Grumpy is grey), and
+ * overriding those would break the visual language of evolution. */
+static const uint32_t BABY_BODY[EGG_PALETTE_COUNT] = {
+    0xFF8F8F, 0xBFA0F0, 0x8FC4F5, 0x92DC9B, 0x7FD8C0, 0xFFDA8A
+};
+static const uint32_t BABY_BELLY[EGG_PALETTE_COUNT] = {
+    0xFFC4C4, 0xE0D2FA, 0xC9E4FF, 0xCBF0CF, 0xB4EEDF, 0xFFEFC4
+};
+static uint32_t  s_egg_twitch_at, s_egg_twitch_t0;
+
+/* Shell + a lighter speckle of the same family. Cosmetic only - nothing here
+ * touches evolution. */
+static const uint32_t EGG_SHELL[EGG_PALETTE_COUNT] = {
+    0xE04A4A, 0x9B6BD8, 0x5A9BE8, 0x5FBF6B, 0x4FC3B0, 0xF2C14E
+};
+static const uint32_t EGG_SPOT[EGG_PALETTE_COUNT] = {
+    0xFFA85C, 0xFFB6E0, 0xB4DCFF, 0xB8EFB0, 0xBDF0E6, 0xFFF0B8
+};
 
 /* --- state -------------------------------------------------------------- */
-static uint8_t     s_form_id = FORM_BABY;
+static uint8_t     s_form_id = FORM_BABY;   /* what is DRAWN right now */
 static int         s_eye_ovr = -1, s_mouth_ovr = -1, s_brow_ovr = -1;
 static pet_live_t  s_live = { 0.5f, 100 };
 
@@ -59,6 +85,11 @@ static pet_anim_done_cb_t s_done_cb = nullptr;
 static uint8_t     s_bath_phase = 0;
 static lv_coord_t  s_bath_from  = 0, s_bath_exit = 0;
 static uint32_t    s_bath_started_ms = 0;
+static uint8_t     s_evo_target;      /* form to become at the flash */
+static uint8_t     s_evo_phase;       /* 0 walk 1 shrink 2 flash 3 grow 4 cheer */
+static uint32_t    s_evo_t0;
+static float       s_evo_scale = 1.0f;
+static bool        s_evo_flash;
 
 /* --- small helpers ------------------------------------------------------ */
 
@@ -131,6 +162,11 @@ void ui_pet_create(lv_obj_t *parent)
         show(o_spark[i], false);
     }
 
+    o_egg = mk(o_root, 10, 10, 0xFFFFFF);
+    for (int i = 0; i < EGG_DOTS; i++) o_egg_dot[i] = mk(o_root, 8, 8, 0xFFFFFF);
+    show(o_egg, false);
+    for (int i = 0; i < EGG_DOTS; i++) show(o_egg_dot[i], false);
+
     s_blink_next = millis() + random(ANIM_BLINK_MIN_MS, ANIM_BLINK_MAX_MS);
     s_anim_t0 = millis();
     s_wander_at = millis() + random(IDLE_WALK_MIN_MS, IDLE_WALK_MAX_MS);
@@ -143,9 +179,14 @@ lv_obj_t *ui_pet_root(void) { return o_root; }
  * switching styles never leaves a stale object from the previous style
  * visible. That is why every branch ends with an explicit show() set. */
 
+/* body_col is passed in rather than read from the form: the Baby's colour is
+ * inherited from its egg, so any SKIN-coloured piece must use the resolved
+ * colour. The angry-slant eyelid was the one that got this wrong - tapping a
+ * coral Baby showed mint lids, because it took f->c_body directly. */
 static void apply_eye(lv_obj_t *eye, lv_obj_t *ext, int style,
                       lv_coord_t cx, lv_coord_t cy, uint8_t size,
-                      const pet_form_t *f, bool inner_is_left, bool blinking)
+                      const pet_form_t *f, uint32_t body_col,
+                      bool inner_is_left, bool blinking)
 {
     const uint32_t ec = f->c_eye;
 
@@ -192,17 +233,24 @@ static void apply_eye(lv_obj_t *eye, lv_obj_t *ext, int style,
         show(eye, true); show(ext, false);
         break;
     }
-    case EYE_STAR: {                      /* APPROX: no star primitive */
-        const lv_coord_t d = size * 6 / 5;
-        lv_obj_set_size(eye, d, d);
+    case EYE_STAR: {
+        /* REDESIGNED after seeing it on the panel. The old version was a
+         * pale ACCENT-coloured disc with a white core, which at this size
+         * read as a vacant, unfocused eye - the single biggest reason the
+         * face looked creepy rather than cheerful.
+         *
+         * A sparkly eye still needs to be an EYE first: a dark pupil, then
+         * the highlight. Same silhouette as OVAL, just brighter. */
+        const lv_coord_t w = size, h = size * 5 / 4;
+        lv_obj_set_size(eye, w, h);
         lv_obj_set_style_radius(eye, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(eye, lv_color_hex(f->c_accent), 0);
-        lv_obj_set_pos(eye, cx - d / 2, cy - d / 2);
-        /* small bright core reads as a sparkle at this size */
-        lv_obj_set_size(ext, 5, 5);
-        lv_obj_set_style_radius(ext, 1, 0);
+        lv_obj_set_style_bg_color(eye, lv_color_hex(ec), 0);
+        lv_obj_set_pos(eye, cx - w / 2, cy - h / 2);
+        /* big off-centre catchlight - what actually makes eyes look alive */
+        lv_obj_set_size(ext, 6, 6);
+        lv_obj_set_style_radius(ext, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(ext, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_pos(ext, cx - 2, cy - 2);
+        lv_obj_set_pos(ext, cx - w / 2 + 2, cy - h / 2 + 3);
         show(eye, true); show(ext, true);
         break;
     }
@@ -214,7 +262,7 @@ static void apply_eye(lv_obj_t *eye, lv_obj_t *ext, int style,
         /* a body-coloured lid clipping the inner-top corner fakes the slant */
         lv_obj_set_size(ext, w + 2, h / 2);
         lv_obj_set_style_radius(ext, 0, 0);
-        lv_obj_set_style_bg_color(ext, lv_color_hex(f->c_body), 0);
+        lv_obj_set_style_bg_color(ext, lv_color_hex(body_col), 0);
         lv_obj_set_pos(ext, cx - w / 2 + (inner_is_left ? -2 : 0), cy - h / 2 - 1);
         show(eye, true); show(ext, true);
         break;
@@ -245,7 +293,10 @@ static void apply_mouth(int style, lv_coord_t cx, lv_coord_t cy,
                         const pet_form_t *f)
 {
     const uint32_t mc = f->c_eye;
-    const lv_coord_t w = 34, h = 24;
+    /* CUTER MOUTHS. Smaller and chunkier than before: a small thick curve
+     * reads as a soft grin, where the old wide thin arc read as a flat line
+     * stretched across the face. Eyes and brows are untouched. */
+    const lv_coord_t w = 26, h = 18;
 
     show(o_mouth_a, false); show(o_mouth_b, false);
     show(o_mouth_fill, false); show(o_mouth_teeth, false);
@@ -263,53 +314,62 @@ static void apply_mouth(int style, lv_coord_t cx, lv_coord_t cy,
         lv_obj_set_size(o_mouth_a, w, h);
         lv_obj_set_pos(o_mouth_a, cx - w / 2, cy - h / 2);
         lv_arc_set_angles(o_mouth_a, a0, a1);
-        lv_obj_set_style_arc_width(o_mouth_a, 4, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_width(o_mouth_a, 5, LV_PART_INDICATOR);
         lv_obj_set_style_arc_color(o_mouth_a, lv_color_hex(mc), LV_PART_INDICATOR);
         show(o_mouth_a, true);
         break;
     }
     case MOUTH_FLAT:
-        lv_obj_set_size(o_mouth_fill, 22, 3);
+        /* short and softly capped, not a hard dash */
+        lv_obj_set_size(o_mouth_fill, 16, 4);
         lv_obj_set_style_radius(o_mouth_fill, 2, 0);
         lv_obj_set_style_bg_color(o_mouth_fill, lv_color_hex(mc), 0);
-        lv_obj_set_pos(o_mouth_fill, cx - 11, cy);
+        lv_obj_set_pos(o_mouth_fill, cx - 8, cy);
         show(o_mouth_fill, true);
         break;
 
     case MOUTH_OPEN_HAPPY:
-        lv_obj_set_size(o_mouth_fill, 26, 18);
+        /* A small round open grin with a big tongue filling most of it -
+         * the tongue is what makes it read as delighted rather than as a
+         * hole. Smaller than before and mostly filled. */
+        lv_obj_set_size(o_mouth_fill, 18, 14);
         lv_obj_set_style_radius(o_mouth_fill, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(o_mouth_fill, lv_color_hex(mc), 0);
-        lv_obj_set_pos(o_mouth_fill, cx - 13, cy - 6);
-        show(o_mouth_fill, true);
+        lv_obj_set_pos(o_mouth_fill, cx - 9, cy - 4);
+        lv_obj_set_size(o_mouth_teeth, 12, 7);
+        lv_obj_set_style_radius(o_mouth_teeth, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(o_mouth_teeth, lv_color_hex(f->c_accent), 0);
+        lv_obj_set_pos(o_mouth_teeth, cx - 6, cy + 3);
+        show(o_mouth_fill, true); show(o_mouth_teeth, true);
         break;
 
     case MOUTH_TOOTHY:
-        lv_obj_set_size(o_mouth_fill, 30, 16);
-        lv_obj_set_style_radius(o_mouth_fill, 5, 0);
+        /* rounder and smaller, so a cheeky grin rather than a snarl */
+        lv_obj_set_size(o_mouth_fill, 24, 13);
+        lv_obj_set_style_radius(o_mouth_fill, 6, 0);
         lv_obj_set_style_bg_color(o_mouth_fill, lv_color_hex(mc), 0);
-        lv_obj_set_pos(o_mouth_fill, cx - 15, cy - 5);
-        lv_obj_set_size(o_mouth_teeth, 26, 5);
-        lv_obj_set_style_radius(o_mouth_teeth, 1, 0);
+        lv_obj_set_pos(o_mouth_fill, cx - 12, cy - 4);
+        lv_obj_set_size(o_mouth_teeth, 18, 4);
+        lv_obj_set_style_radius(o_mouth_teeth, 2, 0);
         lv_obj_set_style_bg_color(o_mouth_teeth, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_pos(o_mouth_teeth, cx - 13, cy - 3);
+        lv_obj_set_pos(o_mouth_teeth, cx - 9, cy - 3);
         show(o_mouth_fill, true); show(o_mouth_teeth, true);
         break;
 
     case MOUTH_WOBBLE: {
         /* APPROX: no path primitive, so a wavy mouth is two short arcs -
          * one curving up, one down - butted together. */
-        const lv_coord_t hw = 18, hh = 16;
+        const lv_coord_t hw = 14, hh = 13;
         lv_obj_set_size(o_mouth_a, hw, hh);
         lv_obj_set_pos(o_mouth_a, cx - hw, cy - hh / 2);
         lv_arc_set_angles(o_mouth_a, 20, 160);
-        lv_obj_set_style_arc_width(o_mouth_a, 3, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_width(o_mouth_a, 4, LV_PART_INDICATOR);
         lv_obj_set_style_arc_color(o_mouth_a, lv_color_hex(mc), LV_PART_INDICATOR);
 
         lv_obj_set_size(o_mouth_b, hw, hh);
         lv_obj_set_pos(o_mouth_b, cx, cy - hh / 2);
         lv_arc_set_angles(o_mouth_b, 200, 340);
-        lv_obj_set_style_arc_width(o_mouth_b, 3, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_width(o_mouth_b, 4, LV_PART_INDICATOR);
         lv_obj_set_style_arc_color(o_mouth_b, lv_color_hex(mc), LV_PART_INDICATOR);
         show(o_mouth_a, true); show(o_mouth_b, true);
         break;
@@ -332,9 +392,76 @@ static float      s_urgency = 0.0f;
  * The pet is anchored by its FEET to a fixed baseline inside the 160x160
  * box, so breathing and squashing change the silhouette without making it
  * appear to float. */
+/* Draws the shell and hides every Visitor part. Kept as an early return so
+ * the egg cannot half-render on top of a pet. */
+static void layout_egg(void)
+{
+    show(o_body, false); show(o_belly, false);
+    show(o_nub_l, false); show(o_nub_r, false);
+    show(o_cheek_l, false); show(o_cheek_r, false);
+    show(o_eye_l, false); show(o_eye_r, false);
+    show(o_eyx_l, false); show(o_eyx_r, false);
+    show(o_brow_l, false); show(o_brow_r, false);
+    show(o_mouth_a, false); show(o_mouth_b, false);
+    show(o_mouth_fill, false); show(o_mouth_teeth, false);
+    for (int i = 0; i < 3; i++) show(o_spark[i], false);
+
+    /* A slow rock all the time, plus TWITCHES that get more frequent as the
+     * hatch approaches: roughly one every 9 s at the start, closing to under
+     * a second at the end. That acceleration is the whole point - the egg
+     * should feel like it is working up to something. */
+    const uint32_t now_ms = millis();
+    if (s_egg_twitch_at == 0) s_egg_twitch_at = now_ms + 3000;
+    if (now_ms >= s_egg_twitch_at) {
+        s_egg_twitch_t0 = now_ms;
+        const uint32_t gap = (uint32_t)(9000.0f - 8100.0f * s_egg_prog);
+        /* jitter so the rhythm never becomes metronomic */
+        s_egg_twitch_at = now_ms + gap / 2 + (uint32_t)random(0, (long)gap);
+    }
+
+    float tilt = sinf(phase(2600)) * 3.0f;
+    const uint32_t since = now_ms - s_egg_twitch_t0;
+    if (s_egg_twitch_t0 && since < 260) {
+        /* sharp shake that decays over the twitch */
+        const float k = 1.0f - (float)since / 260.0f;
+        tilt += sinf((float)since / 26.0f) * (5.0f + 5.0f * s_egg_prog) * k;
+    }
+    const lv_coord_t ew = 96, eh = 118;
+    const lv_coord_t ex = (PET_BOX_PX - ew) / 2 + (lv_coord_t)tilt;
+    const lv_coord_t ey = PET_BOX_PX - eh - 6;
+
+    lv_obj_set_size(o_egg, ew, eh);
+    lv_obj_set_pos(o_egg, ex, ey);
+    /* narrower at the top: a large radius on a tall box gives the egg shape */
+    lv_obj_set_style_radius(o_egg, ew / 2, 0);
+    lv_obj_set_style_bg_color(o_egg, lv_color_hex(EGG_SHELL[s_egg_pal]), 0);
+    show(o_egg, true);
+
+    static const int8_t dx[EGG_DOTS] = { -22, 10, -6, 24, -18, 6, 20 };
+    static const int8_t dy[EGG_DOTS] = {  22, 14, 44, 46,  62, 74, 92 };
+    static const uint8_t dsz[EGG_DOTS] = { 13, 10, 15, 11, 12, 14, 9 };
+    for (int i = 0; i < EGG_DOTS; i++) {
+        lv_obj_set_size(o_egg_dot[i], dsz[i], dsz[i]);
+        lv_obj_set_style_radius(o_egg_dot[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(o_egg_dot[i], lv_color_hex(EGG_SPOT[s_egg_pal]), 0);
+        lv_obj_set_pos(o_egg_dot[i], ex + ew / 2 - dsz[i] / 2 + dx[i], ey + dy[i]);
+        show(o_egg_dot[i], true);
+    }
+    lv_obj_set_pos(o_root, s_pos_x, s_pos_y);
+}
+
 static void layout(void)
 {
+    if (s_egg_on) { layout_egg(); return; }
+    for (int i = 0; i < EGG_DOTS; i++) show(o_egg_dot[i], false);
+    show(o_egg, false);
+
     const pet_form_t *f = forms_get(s_form_id);
+
+    /* Baby inherits the shell colour it hatched from. */
+    const bool tinted = (s_form_id == FORM_BABY && s_baby_pal >= 0);
+    const uint32_t body_col  = tinted ? BABY_BODY[s_baby_pal]  : f->c_body;
+    const uint32_t belly_col = tinted ? BABY_BELLY[s_baby_pal] : f->c_belly;
 
     const bool hold_face  = (s_anim == PET_ANIM_HOLDING);
     const bool sleep_face = (s_anim == PET_ANIM_SLEEPING);
@@ -379,23 +506,36 @@ static void layout(void)
     w += s_squash;
     h -= s_squash;
 
+    if (s_anim == PET_ANIM_EVOLVING) { w *= s_evo_scale; h *= s_evo_scale; }
     const lv_coord_t bw = (lv_coord_t)w, bh = (lv_coord_t)h;
     const lv_coord_t baseline = PET_BOX_PX - 8;
     const lv_coord_t bx = (PET_BOX_PX - bw) / 2;
     const lv_coord_t by = baseline - bh + s_off_y;
 
-    /* body */
+    /* body.
+     * show() is REQUIRED here even though nothing else toggles these two.
+     * layout_egg() hides every Visitor part so the shell cannot draw over a
+     * pet, and each part is re-shown by whichever branch owns it - but body
+     * and belly had no such branch, having never been hidden before the egg
+     * existed. The result was a Visitor that hatched completely black, with
+     * only its features floating on the background. */
+    show(o_body, true);
+    show(o_belly, true);
+
     lv_obj_set_size(o_body, bw, bh);
     lv_obj_set_pos(o_body, bx, by);
     lv_obj_set_style_radius(o_body, (bh * f->body_round) / 100, 0);
-    lv_obj_set_style_bg_color(o_body, lv_color_hex(f->c_body), 0);
+    /* At the flash the Visitor is a white silhouette, so the old form is
+     * never seen morphing into the new one - it emerges from the light. */
+    lv_obj_set_style_bg_color(o_body,
+        lv_color_hex(s_evo_flash ? 0xFFFFFF : body_col), 0);
 
     /* belly: a lighter panel low on the body */
-    const lv_coord_t lw = bw * 3 / 5, lh = bh * 2 / 5;
+    const lv_coord_t lw = bw * 52 / 100, lh = bh * 30 / 100;
     lv_obj_set_size(o_belly, lw, lh);
-    lv_obj_set_pos(o_belly, bx + (bw - lw) / 2, by + bh - lh - 4);
+    lv_obj_set_pos(o_belly, bx + (bw - lw) / 2, by + bh - lh - 6);
     lv_obj_set_style_radius(o_belly, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(o_belly, lv_color_hex(f->c_belly), 0);
+    lv_obj_set_style_bg_color(o_belly, lv_color_hex(belly_col), 0);
 
     const lv_coord_t fcx0 = bx + bw / 2;
 
@@ -410,8 +550,8 @@ static void layout(void)
         lv_obj_set_size(o_nub_r, nw, nh);
         lv_obj_set_style_radius(o_nub_l, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_radius(o_nub_r, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(o_nub_l, lv_color_hex(f->c_body), 0);
-        lv_obj_set_style_bg_color(o_nub_r, lv_color_hex(f->c_body), 0);
+        lv_obj_set_style_bg_color(o_nub_l, lv_color_hex(body_col), 0);
+        lv_obj_set_style_bg_color(o_nub_r, lv_color_hex(body_col), 0);
         lv_obj_set_pos(o_nub_l, fcx0 - nw - 1, by + bh - nh - 8);
         lv_obj_set_pos(o_nub_r, fcx0 + 1,      by + bh - nh - 8);
     } else if (nubs) {
@@ -420,8 +560,8 @@ static void layout(void)
         lv_obj_set_size(o_nub_r, nw, nh);
         lv_obj_set_style_radius(o_nub_l, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_radius(o_nub_r, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(o_nub_l, lv_color_hex(f->c_body), 0);
-        lv_obj_set_style_bg_color(o_nub_r, lv_color_hex(f->c_body), 0);
+        lv_obj_set_style_bg_color(o_nub_l, lv_color_hex(body_col), 0);
+        lv_obj_set_style_bg_color(o_nub_r, lv_color_hex(body_col), 0);
         lv_obj_set_pos(o_nub_l, bx - nw / 2 + 3,      by + bh * 3 / 5);
         lv_obj_set_pos(o_nub_r, bx + bw - nw / 2 - 3, by + bh * 3 / 5);
     }
@@ -429,13 +569,13 @@ static void layout(void)
 
     /* face geometry, proportional to the body so later forms scale */
     const lv_coord_t fcx = bx + bw / 2;
-    const lv_coord_t eye_y = by + bh * 2 / 5 + (s_anim == PET_ANIM_SAD ? 3 : 0);
+    const lv_coord_t eye_y = by + bh * 34 / 100 + (s_anim == PET_ANIM_SAD ? 3 : 0);
     const lv_coord_t ex_l = fcx - f->eye_spacing / 2;
     const lv_coord_t ex_r = fcx + f->eye_spacing / 2;
     const bool blinking = (s_blink_t0 != 0);
 
-    apply_eye(o_eye_l, o_eyx_l, eye, ex_l, eye_y, f->eye_size, f, false, blinking);
-    apply_eye(o_eye_r, o_eyx_r, eye, ex_r, eye_y, f->eye_size, f, true,  blinking);
+    apply_eye(o_eye_l, o_eyx_l, eye, ex_l, eye_y, f->eye_size, f, body_col, false, blinking);
+    apply_eye(o_eye_r, o_eyx_r, eye, ex_r, eye_y, f->eye_size, f, body_col, true,  blinking);
 
     /* brows. APPROX: no rotation for non-image objects in LVGL 8.3, so the
      * slant is expressed as an inner/outer height offset rather than a real
@@ -457,7 +597,11 @@ static void layout(void)
         show(o_brow_l, true); show(o_brow_r, true);
     }
 
-    apply_mouth(mouth, fcx, by + bh * 3 / 5 + 4, f);
+    /* Mouth sits between the eyes and the belly. It used to be drawn at
+     * 3/5 of the body height, which is exactly where the belly panel was -
+     * so an OPEN_HAPPY mouth became a dark void in the middle of a pale
+     * disc. Keeping them apart is what makes the face read as a face. */
+    apply_mouth(mouth, fcx, by + bh * 54 / 100, f);
 
     /* cheeks */
     const bool blush = f->cheek_blush != 0;
@@ -468,10 +612,12 @@ static void layout(void)
         lv_obj_set_style_radius(o_cheek_r, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(o_cheek_l, lv_color_hex(f->c_accent), 0);
         lv_obj_set_style_bg_color(o_cheek_r, lv_color_hex(f->c_accent), 0);
-        lv_obj_set_style_bg_opa(o_cheek_l, LV_OPA_70, 0);
-        lv_obj_set_style_bg_opa(o_cheek_r, LV_OPA_70, 0);
-        lv_obj_set_pos(o_cheek_l, ex_l - f->eye_size, eye_y + f->eye_size);
-        lv_obj_set_pos(o_cheek_r, ex_r - 2,           eye_y + f->eye_size);
+        lv_obj_set_style_bg_opa(o_cheek_l, LV_OPA_50, 0);
+        lv_obj_set_style_bg_opa(o_cheek_r, LV_OPA_50, 0);
+        /* Out at the sides, level with the mouth. Directly under the eyes
+         * they looked like tear tracks. */
+        lv_obj_set_pos(o_cheek_l, bx + bw / 10,          by + bh * 50 / 100);
+        lv_obj_set_pos(o_cheek_r, bx + bw - bw / 10 - 13, by + bh * 50 / 100);
     }
     show(o_cheek_l, blush); show(o_cheek_r, blush);
 
@@ -546,6 +692,42 @@ void ui_pet_force_blink(void) { s_blink_t0 = millis(); }
 void ui_pet_set_done_cb(pet_anim_done_cb_t cb) { s_done_cb = cb; }
 void ui_pet_set_urgency(float u) { s_urgency = u < 0 ? 0 : (u > 1 ? 1 : u); }
 void ui_pet_set_wander(bool on)  { s_wander_on = on; }
+bool ui_pet_evolving(void)       { return s_anim == PET_ANIM_EVOLVING; }
+bool ui_pet_is_egg(void)         { return s_egg_on; }
+
+void ui_pet_set_egg_progress(float p) { s_egg_prog = p < 0 ? 0 : (p > 1 ? 1 : p); }
+void ui_pet_set_baby_palette(int idx)
+{
+    s_baby_pal = (idx >= 0 && idx < EGG_PALETTE_COUNT) ? idx : -1;
+}
+
+void ui_pet_set_egg(bool on, uint8_t palette)
+{
+    s_egg_on  = on;
+    s_egg_pal = (palette < EGG_PALETTE_COUNT) ? palette : 0;
+    if (on) { s_pos_x = PET_HOME_X; s_pos_y = PET_HOME_Y; s_wander_on = false; }
+    else    { s_wander_on = true; }
+}
+
+void ui_pet_evolve_to(uint8_t new_form)
+{
+    s_evo_target = new_form;
+    s_evo_phase  = 0;
+    s_evo_scale  = 1.0f;
+    s_evo_flash  = false;
+    lv_obj_clear_flag(o_root, LV_OBJ_FLAG_HIDDEN);
+    s_walk_from   = s_pos_x; s_walk_from_y = s_pos_y;
+    s_walk_to     = PET_HOME_X; s_walk_to_y = PET_HOME_Y;
+    s_anim    = PET_ANIM_EVOLVING;
+    s_anim_t0 = millis();
+}
+
+void ui_pet_place(lv_coord_t x, lv_coord_t y)
+{
+    s_pos_x = x; s_pos_y = y;
+    s_walk_from = s_walk_to = x;
+    s_walk_from_y = s_walk_to_y = y;
+}
 
 void ui_pet_walk_to(lv_coord_t x, lv_coord_t y)
 {
@@ -580,6 +762,7 @@ void ui_pet_set_x(lv_coord_t x)
 
 void ui_pet_tick(void)
 {
+    if (s_egg_on) { layout(); return; }
     const uint32_t now = millis();
     const uint32_t el  = now - s_anim_t0;
 
@@ -637,6 +820,58 @@ void ui_pet_tick(void)
         }
         break;
     }
+    case PET_ANIM_EVOLVING: {
+        switch (s_evo_phase) {
+        case 0: {                                  /* walk to the centre */
+            float t = (float)el / (float)EVO_WALK_MS;
+            if (t >= 1.0f) { s_pos_x = PET_HOME_X; s_pos_y = PET_HOME_Y;
+                             s_evo_phase = 1; s_anim_t0 = now; }
+            else {
+                s_pos_x = s_walk_from   + (lv_coord_t)((s_walk_to   - s_walk_from)   * t);
+                s_pos_y = s_walk_from_y + (lv_coord_t)((s_walk_to_y - s_walk_from_y) * t);
+            }
+            break;
+        }
+        case 1: {                                  /* pull in, pulsing */
+            float t = (float)el / (float)EVO_SHRINK_MS;
+            if (t >= 1.0f) { s_evo_phase = 2; s_anim_t0 = now; s_evo_flash = true;
+                             s_form_id = s_evo_target;   /* swap AT the flash */
+                             s_evo_scale = 0.25f; }
+            else {
+                s_evo_scale = 1.0f - 0.75f * t;
+                s_off_y = (lv_coord_t)(3.0f * sinf(t * 6.2831853f * 4.0f));
+                s_spark_on = true;
+            }
+            break;
+        }
+        case 2:                                    /* white flash */
+            if (el >= EVO_FLASH_MS) { s_evo_phase = 3; s_anim_t0 = now;
+                                      s_evo_flash = false; }
+            break;
+        case 3: {                                  /* grow into the new form */
+            float t = (float)el / (float)EVO_GROW_MS;
+            if (t >= 1.0f) { s_evo_scale = 1.0f; s_evo_phase = 4; s_anim_t0 = now; }
+            else {
+                /* slight overshoot, so it arrives with a bounce */
+                s_evo_scale = 0.25f + 0.85f * t;
+                s_spark_on = true;
+            }
+            break;
+        }
+        default:                                   /* cheer, then done */
+            s_evo_scale = 1.0f;
+            s_spark_on = true;
+            s_off_y = -(lv_coord_t)(10.0f * fabsf(sinf((float)el / 160.0f)));
+            s_anim_mouth = MOUTH_OPEN_HAPPY;
+            if (el >= EVO_CHEER_MS) {
+                ui_pet_play(PET_ANIM_IDLE);
+                if (s_done_cb) s_done_cb(PET_ANIM_EVOLVING);
+            }
+            break;
+        }
+        break;
+    }
+
     case PET_ANIM_SLEEPING:
         /* Nothing to drive: the slow breathe and the sleepy face are handled
          * in layout(), and the pet stays put in the bed. */
@@ -751,6 +986,8 @@ void ui_pet_set_form(uint8_t form_id)
 {
     if (form_id < FORM_COUNT) s_form_id = form_id;
 }
+
+/* During EVOLVING the drawn form is swapped at the flash, not here. */
 uint8_t ui_pet_get_form(void) { return s_form_id; }
 
 void ui_pet_set_face(int eye_style, int mouth_style, int brow_style)
@@ -782,7 +1019,8 @@ const char *ui_pet_anim_name(pet_anim_t a)
         case PET_ANIM_EATING:   return "eating";
         case PET_ANIM_REFUSE:   return "refuse";
         case PET_ANIM_CLEANING: return "cleaning";
-        case PET_ANIM_SLEEPING: return "sleeping";
+        case PET_ANIM_EVOLVING: return "evolving";
+    case PET_ANIM_SLEEPING: return "sleeping";
         default:             return "?";
     }
 }

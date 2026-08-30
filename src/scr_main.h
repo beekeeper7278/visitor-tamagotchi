@@ -33,6 +33,12 @@ lv_obj_t *scr_main_obj(void);
 lv_obj_t *scr_main_overlay(void);   /* the empty PNG seam */
 lv_obj_t *scr_main_room(void);      /* room_layer - mess sprites live here */
 void      scr_main_hud_refresh(void);
+void      scr_main_egg_refresh(void);   /* egg UI + hatch countdown */
+
+/* Virtual room darkness. Dims the pet scene ONLY - never the menus, and
+ * never the sleeping Zs, which are drawn above it. */
+void      scr_main_set_room_dark(bool dark);
+void      scr_main_sleep_fx(void);      /* floating Zs while asleep */
 
 #ifdef __cplusplus
 }

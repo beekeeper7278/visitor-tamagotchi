@@ -10,6 +10,7 @@
 #include "menu.h"
 #include "ui_bubble.h"
 #include "scr_main.h"
+#include "pages.h"
 
 static lv_obj_t *s_scr;
 static lv_obj_t *s_cont;                 /* pages live here                 */
@@ -226,9 +227,17 @@ static void gesture_cb(lv_event_t *e)
     const int dx = p.x - s_p0.x, dy = p.y - s_p0.y;
 
     if (code == LV_EVENT_PRESSING) {
+        /* The Journal scrolls vertically inside the pager. A drag there must
+         * clear a STRICTER horizontal bar, otherwise a slightly-diagonal
+         * scroll flicks the page sideways mid-read. Everywhere else keeps the
+         * original thresholds. */
+        const bool in_scroller = (s_idx == PAGE_JOURNAL);
+        const int min_dx = in_scroller ? (SWIPE_MIN_TRAVEL_PX * 3 / 2)
+                                       : SWIPE_MIN_TRAVEL_PX;
+        const int ratio  = in_scroller ? (SWIPE_AXIS_RATIO * 2) : SWIPE_AXIS_RATIO;
         if (!s_swiped && !s_busy &&
-            abs(dx) >= SWIPE_MIN_TRAVEL_PX &&
-            abs(dx) > SWIPE_AXIS_RATIO * abs(dy)) {
+            abs(dx) >= min_dx &&
+            abs(dx) > ratio * abs(dy)) {
             s_swiped = true;
             /* drag left  (dx<0) -> next page */
             menu_step(dx < 0 ? 1 : -1);

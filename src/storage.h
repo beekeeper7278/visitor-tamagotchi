@@ -13,7 +13,27 @@
 extern "C" {
 #endif
 
-#define SAVE_SCHEMA_VERSION 2
+/* --- SAVE SIZE BUDGET ---------------------------------------------------
+ * RAISED 384 -> 448 at schema 3, deliberately.
+ *
+ * Schema 3 measures 397 bytes. The old 384 figure was an early design target
+ * from Phase 1, not a hardware limit, and Phase 8 needed explicitly-named
+ * personality, evolution-path and discipline-history fields. The alternative
+ * was semantic field reuse, which is exactly what this schema was rewritten
+ * to remove - saving 13 bytes by storing a trait in a field called kid_form
+ * is the wrong trade.
+ *
+ * NVS cost: the blob is stored in 32-byte entries, so 397 bytes occupies 13
+ * entries = 416 bytes plus index overhead, call it ~450 bytes per save. The
+ * nvs partition is 0x5000 = 20,480 bytes; NVS keeps one page for compaction,
+ * leaving roughly 16 KB usable. The live save plus the game-records key
+ * (~40 B) therefore use about 3% of it. Visit Records in Phase 9 have ample
+ * room even at generous retention.
+ *
+ * The shadow copy used for write suppression lives in RAM, not NVS. */
+#define SAVE_SIZE_BUDGET 448
+
+#define SAVE_SCHEMA_VERSION 5
 
 /* Journal entry classes - see design doc section 11 */
 enum { JRN_MILESTONE = 0, JRN_RECORD = 1, JRN_FLAVOUR = 2 };
@@ -97,7 +117,47 @@ typedef struct __attribute__((packed)) {
     uint16_t mess_age_min[4];
     uint8_t  mess_drained[4];
     uint8_t  mess_x2[4], mess_y2[4];
+
+    /* --- schema 3 additions ------------------------------------------------
+     * Phase 8 state gets EXPLICIT names. An earlier version rode personality
+     * in kid_form/teen_form and mischief in pending_need because those bytes
+     * were spare - but a trait stored in a field called kid_form is a trap
+     * for every future reader of the migration, the Journal and any debug
+     * session. A few extra bytes is the cheaper side of that trade.
+     *
+     * pending_need keeps its real meaning again. */
+    uint8_t  personality_trait_1;
+    uint8_t  personality_trait_2;
+    uint8_t  mischief_tendency;      /* 0..100 hidden tendency             */
+    uint16_t food_history[3];        /* burger / fruit / cake, lifetime    */
+    uint16_t stage_start_day;        /* for per-stage rate denominators    */
+    uint16_t stage_day_entered[5];   /* day each stage was entered         */
+    float    acc_hours;              /* hours of accumulator sampling      */
+    uint8_t  evo_announce;           /* a form change is waiting to be SHOWN */
+    uint8_t  evo_path[4];            /* forms held at baby/kid/teen/adult  */
+    uint16_t disc_opportunities;     /* lifetime, for the Journal          */
+    uint16_t disc_ignored;           /* misbehaviour left uncorrected      */
+
+    /* --- schema 4: the egg ------------------------------------------------
+     * Persisted so a power cut during the five-minute hatch does not lose
+     * the egg or restart its timer. */
+    uint8_t  egg_color;
+    uint8_t  egg_choice;
+    uint32_t egg_hatch_ts;
+    float    bath_target_h;   /* schema 5: randomised cycle target */
 } save_t;
+
+#define SAVE_V3_SIZE 397
+/* schema 5 measures 407 and adds one float, so schema 4 was 403. Getting
+ * this wrong rejects every v4 save as corrupt. */
+#define SAVE_V4_SIZE 403   /* schema 4 adds egg_choice; see the migration */          /* frozen: sizeof(save_t) at schema 3    */
+
+/* Fail the BUILD rather than discover an over-budget blob on hardware. */
+#ifdef __cplusplus
+static_assert(sizeof(save_t) <= SAVE_SIZE_BUDGET, "save_t exceeds its NVS budget");
+#endif
+
+#define SAVE_V2_SIZE 363          /* frozen: sizeof(save_t) at schema 2    */
 
 #define SAVE_V1_SIZE 332          /* frozen: sizeof(save_t) at schema 1     */
 #define MESS_BITTEN_BIT 0x80

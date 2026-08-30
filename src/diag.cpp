@@ -19,6 +19,11 @@
 #include "setclock.h"
 #include "games.h"
 #include "gamerec.h"
+#include "evolve.h"
+#include "discipline.h"
+#include "journal.h"
+#include "visitrec.h"
+#include "farewell.h"
 #include "menu.h"
 #include "pages.h"
 #include "pet.h"
@@ -624,8 +629,8 @@ void diag_rtc_clear_os(void)
 void diag_storage_report(void)
 {
     Serial.println("[S] STORAGE FOUNDATION");
-    Serial.printf("    sizeof(save_t)    : %u bytes (budget 384)\n",
-                  (unsigned)sizeof(save_t));
+    Serial.printf("    sizeof(save_t)    : %u bytes (budget %u)\n",
+                  (unsigned)sizeof(save_t), (unsigned)SAVE_SIZE_BUDGET);
     Serial.printf("    schema version    : %u\n", SAVE_SCHEMA_VERSION);
     Serial.printf("    journal entries   : %u x %u bytes\n",
                   (unsigned)(sizeof(((save_t*)0)->journal) / sizeof(journal_entry_t)),
@@ -993,6 +998,100 @@ static void diag_clock_to(uint8_t hour, uint8_t minute, const char *what)
                   pet_stage_name(p->stage));
 }
 
+/* Seed a care HISTORY rather than poking the visible meters: evolution reads
+ * the accumulators, so this is what a genuinely well- or badly-raised Visitor
+ * actually looks like to the selection logic. */
+/* engage = 100*games/(2*stage_days), so a fixed game count gives wildly
+ * different engagement depending on how long the stage has run. Seed the
+ * count from a TARGET engagement instead, or a mid-care test reads as
+ * excellent at day 3 and neglectful at day 13. */
+static void seed_engage(pet_state_t *p, float target)
+{
+    p->stage_start_day = 0;
+    const float stage_days = (float)p->days_alive + 0.5f;
+    float g = target * 2.0f * stage_days / 100.0f;
+    if (g < 0.0f) g = 0.0f;
+    p->games_played = (uint16_t)(g + 0.5f);
+}
+
+static void diag_seed_care(int level)   /* 0 poor, 1 mid, 2 excellent */
+{
+    pet_state_t *p = pet_mutable();
+    if (level == 1) {
+        /* Middling: fed and clean enough, played with sometimes, discipline
+         * about neutral, a couple of needs missed. The everyday case. */
+        p->care_happy = 62.0f; p->care_fed = 65.0f; p->care_clean = 58.0f;
+        p->care_sleep = 60.0f; p->care_discipline = 55.0f; p->nutrition = 35.0f;
+        p->happiness = 65.0f; p->hunger = 55.0f; p->cleanliness = 60.0f;
+        p->energy = 65.0f; p->discipline = 55.0f;
+        seed_engage(p, 45.0f);
+        p->meals = 10; p->junk_meals = 4;
+        p->ignored_requests = 2; p->disc_unfair = 1; p->disc_correct = 1;
+        p->weight_g = 58.0f;
+        Serial.println("(test) seeded MID care history");
+        evolve_explain();
+        return;
+    }
+    const bool good = (level == 2);
+    if (good) {
+        p->care_happy = 92.0f; p->care_fed = 95.0f; p->care_clean = 88.0f;
+        p->care_sleep = 90.0f; p->care_discipline = 78.0f; p->nutrition = 10.0f;
+        p->happiness = 95.0f; p->hunger = 70.0f; p->cleanliness = 90.0f;
+        p->energy = 90.0f; p->discipline = 78.0f;
+        seed_engage(p, 90.0f); p->meals = 10; p->junk_meals = 1;
+        p->ignored_requests = 0; p->disc_unfair = 0; p->disc_correct = 3;
+        p->weight_g = 52.0f;
+    } else {
+        p->care_happy = 30.0f; p->care_fed = 28.0f; p->care_clean = 25.0f;
+        p->care_sleep = 35.0f; p->care_discipline = 30.0f; p->nutrition = 70.0f;
+        p->happiness = 30.0f; p->hunger = 20.0f; p->cleanliness = 20.0f;
+        p->discipline = 30.0f;
+        seed_engage(p, 3.0f); p->meals = 8; p->junk_meals = 6;
+        p->ignored_requests = 6; p->disc_unfair = 3; p->disc_correct = 0;
+        p->weight_g = 78.0f;
+    }
+    Serial.printf("(test) seeded %s care history\n", good ? "EXCELLENT" : "POOR");
+    evolve_explain();
+}
+
+/* TIME TRAVEL. Moves the hatch timestamp BACKWARDS, which ages the Visitor
+ * through the same derived path as real time - pet_age_days() reads the
+ * clock, so nothing here is a special case. Advancing the RTC instead would
+ * also shift the sleep window, which is not what we want to test. */
+static void diag_time_travel(uint32_t hours)
+{
+    pet_state_t *p = pet_mutable();
+    if (!p->hatch_ts) { Serial.println("no hatch timestamp - hatch it first"); return; }
+    p->hatch_ts -= hours * 3600UL;
+    pet_refresh_age();
+    const float d = pet_age_days();
+    Serial.printf("TIME TRAVEL +%luh  ->  age %.3f days (%s)\n",
+                  (unsigned long)hours, (double)d, pet_stage_name(p->stage));
+    if (pet_apply_stage_for_day(d) > 0) {
+        const uint8_t f = evolve_pick_form(p->stage);
+        if (f != p->form_id) evolve_present(f, false);
+        evolve_on_stage_entered(p->stage, p->days_alive);
+    }
+    persist_mark_dirty("time travel");
+}
+
+static void diag_age_report(void)
+{
+    const pet_state_t *p = pet_get();
+    Serial.println();
+    Serial.println("=== AGE CLOCK =============================================");
+    Serial.printf("  hatch_ts       : %lu\n", (unsigned long)p->hatch_ts);
+    Serial.printf("  rtc trusted    : %s\n", rtc_trusted() ? "yes" : "NO -> age 0");
+    Serial.printf("  pet_age_days() : %.4f  (fractional, derived from the clock)\n",
+                  (double)pet_age_days());
+    Serial.printf("  days_alive     : %u  (cache)   days_alive_max %u (monotonic)\n",
+                  p->days_alive, p->days_alive_max);
+    Serial.printf("  stage          : %s   boundaries %.1f / %.1f / %.1f\n",
+                  pet_stage_name(p->stage), (double)STAGE_DAY_KID,
+                  (double)STAGE_DAY_TEEN, (double)STAGE_DAY_ADULT);
+    Serial.println("-----------------------------------------------------------");
+}
+
 static void diag_screen(bool pet)
 {
     if (pet) { scr_main_show(); Serial.println("screen -> PET (Phase 2)"); }
@@ -1038,6 +1137,12 @@ void diag_help(void)
     Serial.println("  --- Phase 7: games ---");
     Serial.println("  Q  Higher/Lower  q  Reaction  E  Memory  z  Tilt Maze");
     Serial.println("  a  game records report   K  force-exit a game");
+    Serial.println("  <  explain evolution scores   >  discipline report");
+    Serial.println("  /  force a mischief window (test)");
+    Serial.println("  F  force next stage + evolution   O  arm offline evo reveal");
+    Serial.println("  +  EXCELLENT care   =  MID care   _  POOR care history");
+    Serial.println("  .  age +6h   ,  age +1h   *  age clock report");
+    Serial.println("  J  visit records report   @  farewell   ;  acknowledge   :  start egg (10s)");
     Serial.println("  B  one sample bubble (cycles tiers)");
     Serial.println("  S  BUBBLE STRESS TEST - 20 requests, most should refuse");
     Serial.println("  L  BUBBLE LAYOUT TEST - 4 strings x 3 pet positions");
@@ -1135,6 +1240,63 @@ void diag_serial_tick(void)
             case 'E': games_launch(GAME_MEMORY); break;
             case 'z': games_launch(GAME_MAZE);   break;
             case 'a': gamerec_report();          break;
+            case 'W'+256: break;
+            case 'w'+256: break;
+            case 'x'+256: break;
+            case '<': evolve_explain();          break;
+            case '>': discipline_report();       break;
+            case '1'+256: break;
+            case 'F': {   /* force the next stage + its evolution, live */
+                pet_state_t *pp = pet_mutable();
+                const uint8_t next = (pp->stage < STAGE_ADULT) ? pp->stage + 1 : STAGE_ADULT;
+                if (!pp->hatch_ts) pp->hatch_ts = 1;
+                pp->stage = next;
+                pp->days_alive = (next == STAGE_KID) ? STAGE_DAY_KID
+                               : (next == STAGE_TEEN) ? STAGE_DAY_TEEN
+                               : (next == STAGE_ADULT) ? STAGE_DAY_ADULT : 0;
+                const uint8_t f = evolve_pick_form(next);
+                Serial.printf("(test) forcing %s -> %s\n",
+                              pet_stage_name(next), forms_name(f));
+                evolve_present(f, false);
+                /* Go through the SAME stage-entry path the real transition
+                 * uses, so the growth spurt and per-stage counter resets are
+                 * actually exercised by the test hook. */
+                evolve_on_stage_entered(next, pp->days_alive);
+                break;
+            }
+            case '?'+512: break;
+            case '.': diag_time_travel(6);       break;
+            case ',': diag_time_travel(1);       break;
+            case '*': diag_age_report();         break;
+            case 'J': visitrec_report();         break;
+            case ':': {   /* start the egg timer, shortened for testing */
+                pet_state_t *pp = pet_mutable();
+                if (pp->stage != STAGE_EGG) { Serial.println("not an egg"); break; }
+                const uint32_t now = rtc_trusted() ? rtc_now() : (millis() / 1000);
+                pp->egg_hatch_ts = now + 10;
+                Serial.println("(test) egg timer started - hatching in 10 s");
+                break;
+            }
+            case ';': farewell_acknowledge();    break;
+            case 'B'+512: break;
+            case '@': {   /* jump to the end of the visit */
+                pet_mutable()->days_alive = VISIT_LENGTH_DAYS;
+                Serial.println("(test) visit end reached - farewell should start");
+                farewell_begin();
+                break;
+            }
+            case '+': diag_seed_care(2);         break;
+            case '=': diag_seed_care(1);         break;
+            case '_': diag_seed_care(0);         break;
+            case 'O': {   /* fake an offline evolution announcement */
+                pet_mutable()->evo_announce = 1;
+                Serial.println("(test) evo_announce set - reboot to see the reveal");
+                persist_save(true);
+                break;
+            }
+            case 'G'+256: break;
+            case '/': discipline_misbehave(MIS_MESS);
+                      Serial.println("(test) forced a mischief window"); break;
             case 'Q'+128: break;
             case 'K': games_force_exit();        break;
             case 'Y': diag_persist_fidelity();   break;

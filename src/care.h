@@ -55,6 +55,12 @@ void          care_clean(void);         /* removes ALL messes               */
 
 bool        care_lights_on(void);
 void        care_set_lights(bool on);
+
+/* True when the clock says the Visitor should be asleep right now. Any
+ * scripted action that finishes must consult this and put it back to bed. */
+void        care_new_bath_target(void);
+bool        care_sleep_due(void);
+void        care_return_to_bed(void);
 bool        care_is_holding(void);      /* urgent -> renderer holding pose  */
 uint8_t     care_mess_count(void);
 const char *care_food_name(food_t f);

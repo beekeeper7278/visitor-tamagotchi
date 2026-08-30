@@ -50,7 +50,58 @@
 #define VISIT_LENGTH_DAYS       21
 #define SIM_ELAPSED_CAP_SEC     (72L * 3600L)   /* stat decay cap */
 #define SIM_CHUNK_SEC           (15L * 60L)     /* 15-minute chunks */
-#define ACCUM_HALFLIFE_HOURS    24.0f
+/* RESCALED 24 h -> 12 h for the 1/3/6-day lifecycle.
+ *
+ * The 24 h value was chosen when Baby lasted 3 days, so one half-life was a
+ * third of the stage. With a 1-day Baby stage it became the WHOLE stage:
+ * Baby care could barely move the accumulators before Kid selection read
+ * them, so the first stage had almost no say in its own outcome.
+ *
+ * At 12 h one half-life is half the Baby stage, restoring roughly the old
+ * ratio, and the accumulator closes 75% of its gap within that stage.
+ * Recomputed guarantees (both testable):
+ *   two days of perfect care from a bottomed-out 20 -> 95   (was 80)
+ *   one bad day from a perfect 100                  -> 40   (was 60)
+ * So recovery got faster AND one bad day bites harder - but 40 is back above
+ * 70 after twelve hours of good care, so nothing is locked. 8 h was rejected
+ * as too twitchy: it drops a perfect Visitor to 30 for a single bad day. */
+#define ACCUM_HALFLIFE_HOURS    12.0f
+
+/* --- Evolution boundary handling [MILESTONE 8] --------------------------
+ * A composite that lands within EVO_EPS of a threshold must NOT let
+ * floating-point residue pick a major branch. Observed in testing: a BA of
+ * -0.028 printed as "-0.0" and silently routed a Visitor to Mischief Kid.
+ *
+ * Inside the neutral zone the documented tie-break applies: BENEFIT OF THE
+ * DOUBT - the kinder branch wins. A Visitor sitting exactly on the line has
+ * not done anything wrong, and a child should not be handed the worse
+ * outcome by a rounding error. Deterministic for the same saved history. */
+#define EVO_EPS                 0.75f
+
+/* Evolution presentation. Short on purpose - about 2.6 s total. A long
+ * transformation is charming once and tedious every time after. */
+#define EVO_WALK_MS             600     /* move to centre                  */
+#define EVO_SHRINK_MS           500     /* pull in and pulse               */
+#define EVO_FLASH_MS            260     /* white silhouette flash          */
+#define EVO_GROW_MS             620     /* grow into the new form          */
+#define EVO_CHEER_MS            700     /* hop + sparkles + bubble         */
+
+/* --- Discipline [MILESTONE 8] ------------------------------------------
+ * Discipline is contextual: it responds to a real misbehaviour window, and
+ * cannot be farmed by pressing the button. */
+#define DISC_WINDOW_MS          45000UL  /* how long an opportunity lasts   */
+#define DISC_GAIN               8.0f     /* moderate, per correct telling-off */
+#define DISC_UNFAIR_HAPPY_LOSS  4.0f
+#define DISC_IGNORED_LOSS       3.0f     /* when a window expires unused    */
+#define DISC_IGNORED_MISCHIEF   6        /* tendency rises when ignored     */
+#define DISC_ANNOY_DECAY_MS     120000UL /* unfair-discipline annoyance     */
+
+/* Spontaneous mischief. Frequency scales with the hidden tendency and falls
+ * as discipline rises, so a well-raised Visitor genuinely misbehaves less.
+ * Kept uncommon on purpose: mischief should be a treat, not a chore. */
+#define MISCHIEF_CHECK_MS       30000UL  /* how often a roll happens        */
+#define MISCHIEF_BASE_PCT       6        /* % chance at the check           */
+#define MISCHIEF_MIN_GAP_MS     180000UL /* never twice inside 3 minutes    */
 
 /* RTC plausibility bounds [SPEC section 6] */
 #define RTC_MIN_VALID_TS        1704067200UL    /* 2024-01-01 00:00:00 */
@@ -74,14 +125,48 @@
  * PHASE 5+6 SETS THE STAGE ONLY. Which Kid / Teen / Adult FORM the Visitor
  * becomes is Phase 8 evolution work and is deliberately not decided here. */
 #define STAGE_EGG               0
+
+/* --- The egg [MILESTONE 9] ---------------------------------------------
+ * A new Visitor arrives as an egg and hatches on a timer the player starts.
+ * The shell colour is purely cosmetic and is deliberately NOT fed into any
+ * accumulator - a child should be able to hope for a favourite colour
+ * without it secretly deciding how their Visitor turns out. */
+#define EGG_HATCH_SEC           300     /* five minutes                    */
+#define EGG_PALETTE_COUNT       6
+
+/* Egg selector geometry. The bottom row's touch box previously OVERLAPPED
+ * START by 4 px (row1 296..348, START 344..428) - so a tap near the lower
+ * edge of any bottom-row swatch could land on START and begin the hatch.
+ * Measured, not eyeballed: the numbers below keep a 26 px dead band between
+ * the two hitboxes, and the constants are laid out so the gap can be checked
+ * arithmetically rather than by looking at it. */
+#define EGG_SW_W                80      /* was 74 */
+#define EGG_SW_H                60      /* was 52 */
+#define EGG_SW_ROW0_Y           180
+#define EGG_SW_ROW1_Y           250     /* 250 + 60 = 310                  */
+#define EGG_START_Y             350     /* 350 - 310 = 40 px of dead space */
+#define EGG_START_H             84
+#define EGG_SW_GAP_X            10
+#define EGG_DOTS                7
+
+/* Freshly hatched: hungry and wanting attention, but in a clean room. The
+ * first thing a child should want to do is feed it and play with it - not
+ * clean up after a mess it did not make. */
+#define EGG_HATCH_HUNGER        10.0f
+#define EGG_HATCH_HAPPINESS     10.0f
+#define EGG_HATCH_CLEANLINESS   100.0f
 #define STAGE_BABY              1
 #define STAGE_KID               2
 #define STAGE_TEEN              3
 #define STAGE_ADULT             4
 
-#define STAGE_DAY_KID           3
-#define STAGE_DAY_TEEN          7
-#define STAGE_DAY_ADULT         13
+/* FRACTIONAL days, compared against pet_age_days(). Whole-day granularity
+ * would mean a Visitor hatched at 18:00 becomes a Kid at midnight rather
+ * than 24 hours later - tolerable at a 3-day Baby stage, badly wrong at a
+ * 1-day one. */
+#define STAGE_DAY_KID           1.0f
+#define STAGE_DAY_TEEN          3.0f
+#define STAGE_DAY_ADULT         6.0f
 
 /* --- Sleep window [MILESTONE 5] ----------------------------------------
  * Local wall-clock hours. Night sleep is the long one; the Baby also naps in
@@ -103,8 +188,19 @@
 /* Lights OFF dims the PANEL, using the verified brightness control rather
  * than a translucent overlay - a real dim costs less power on AMOLED and
  * looks like night instead of like fog. Never overwrites the daytime value. */
-#define LIGHTS_OFF_BRIGHTNESS   0x18
+/* The VIRTUAL room light is a scene-level dim, not the panel backlight.
+ * bsp_set_brightness() dims the whole device including menus, which made the
+ * Food and Care pages unreadable at night - the room being dark must not make
+ * the controls dark. Physical brightness stays available as a real device
+ * setting later. */
+#define ROOM_DIM_OPA            170     /* black overlay alpha, 0..255     */
 #define LIGHTS_TOO_BRIGHT_MS    45000UL  /* min gap between complaints      */
+
+/* If the Visitor is awake while the clock says it should be asleep and the
+ * normal transition has not taken hold within this long, it is put in bed
+ * unconditionally. A missed bedtime should never survive - whatever the
+ * cause: a long action, a suspended tick, a boot in the middle of the night. */
+#define SLEEP_CATCHUP_MS        4000UL
 
 /* --- Offline catch-up caps [MILESTONE 6] -------------------------------
  * TIME IS NEVER CAPPED. Age, days alive, stage timing and visit duration
@@ -251,9 +347,24 @@
  * obviously visible. The 20..120 g span is therefore chosen so that a single
  * cake (+3 g) moves weight_norm by 0.03, i.e. body width by ~0.6% - about one
  * pixel. Getting visibly chonky takes many cakes, which is the requirement. */
-#define PET_WEIGHT_MIN_G        20.0f
-#define PET_WEIGHT_MAX_G        120.0f
+/* Span narrowed 20..120 -> 35..95 alongside the slower cake weight. Measured
+ * on device: 5 cakes moves 45.0 -> 47.4 g and 20 cakes -> 53.0 g. Over the
+ * old 100 g span that was ~1% and ~3% of body width - five cakes correctly
+ * invisible, but twenty barely readable either. Over 60 g the same grams give
+ * ~1.6% and ~5.3%, so the top end shows while five cakes still does not. */
+#define PET_WEIGHT_MIN_G        35.0f
+#define PET_WEIGHT_MAX_G        95.0f
 #define PET_WEIGHT_START_G      45.0f
+
+/* Growth spurt: on each stage transition, excess weight above the new
+ * stage's baseline is pulled partway back, as if the Visitor grew into it.
+ * Never a full reset - an overeating history should still be able to produce
+ * a Chonky Adult, and the junk accumulator is untouched by this. */
+#define GROWTH_SPURT_FRACTION   0.45f
+#define STAGE_BASELINE_BABY_G   45.0f
+#define STAGE_BASELINE_KID_G    52.0f
+#define STAGE_BASELINE_TEEN_G   60.0f
+#define STAGE_BASELINE_ADULT_G  68.0f
 
 /* FOOD. Cake is the only item that cannot be refused, which is what makes it
  * the route to overfeeding - and it pays badly in hunger, so filling up on
@@ -262,11 +373,24 @@
 #define FOOD_PARTIAL_PCT        75.0f   /* at/above: burger half-eaten       */
 
 #define BURGER_HUNGER           28.0f
-#define BURGER_WEIGHT_G         2.5f
-#define FRUIT_HUNGER            16.0f
-#define FRUIT_WEIGHT_G          0.6f
+#define BURGER_WEIGHT_G         0.5f
+/* APPLE IS A SNACK, NOT A MEAL. It tops up a little and is accepted whenever
+ * there is any room at all - it never triggers the burger's partial-eat or
+ * fullness refusal, because "too full for a whole burger" and "too full for
+ * one apple" are not the same thing. */
+/* Refuse at 99+, not at exactly 100: hunger is a float that decays every
+ * tick, so it sits at 99.97 and an == 100 test would essentially never fire.
+ * The player sees "100" either way. */
+#define FRUIT_FULL_PCT          99.0f
+#define FRUIT_HUNGER            5.0f
+#define FRUIT_WEIGHT_G          0.05f
 #define CAKE_HUNGER             8.0f    /* modest, by design                 */
-#define CAKE_WEIGHT_G           3.0f
+/* RETUNED: cake was 3.0 g, which made five cakes visibly fatten the Visitor.
+ * At 0.8 g five cakes move body width by well under 2%, and it takes roughly
+ * 15-20 before chubbiness reads clearly. The junk/nutrition accumulator that
+ * feeds Evolution is UNCHANGED - visible weight and care history are related
+ * but separate systems. */
+#define CAKE_WEIGHT_G           0.8f
 #define CAKE_HAPPY              6.0f
 
 #define FOOD_PARTIAL_FRACTION   0.5f    /* how much of a burger gets eaten   */
@@ -275,7 +399,37 @@
 /* BATHROOM. Need climbs continuously; the holding pose and warnings start at
  * URGENT, and the accident only lands after a grace period on top of that -
  * so there is always a visible warning window before anything goes wrong. */
-#define RATE_BATHROOM_PER_HOUR  22.0f
+/* PER-STAGE, RANDOMISED, measured in Visitor-AWAKE hours to urgent.
+ * Replaces a single 22.0/hour constant that gave every stage the same 3.2 h
+ * to urgent - already inside the Baby band and FASTER than the requested
+ * Adult band, so the flat rate was not what made it feel infrequent.
+ *
+ * A fresh target is drawn from the stage's range at the start of every cycle
+ * and PERSISTED, so the timing never feels like clockwork and a reboot does
+ * not reroll it. */
+#define BATH_HOURS_BABY_MIN     2.5f
+#define BATH_HOURS_BABY_MAX     3.5f
+#define BATH_HOURS_KID_MIN      3.0f
+#define BATH_HOURS_KID_MAX      4.0f
+#define BATH_HOURS_TEEN_MIN     3.5f
+#define BATH_HOURS_TEEN_MAX     5.0f
+#define BATH_HOURS_ADULT_MIN    4.0f
+#define BATH_HOURS_ADULT_MAX    6.0f
+
+/* Sleep multiplier. The rate used to be applied identically asleep and
+ * awake - unlike hunger, happiness, energy, cleanliness and weight, which
+ * all branch on ctx->asleep. An 11-hour night therefore overflowed the meter
+ * twice and guaranteed an overnight accident. At 0.25 a night adds roughly
+ * 60% of a cycle instead. */
+#define BATHROOM_SLEEP_RATE     0.25f
+
+/* Visual warning tiers. Escalation is mostly POSE, not speech - more
+ * frequent potty events must not mean more nagging. */
+#define BATH_TIER_SUBTLE_PCT    60.0f
+#define BATH_TIER_OBVIOUS_PCT   80.0f
+#define BATH_TIER_URGENT_PCT    95.0f
+#define BATH_WARN_OBVIOUS_MS    45000UL
+#define BATH_WARN_URGENT_MS     20000UL
 #define BATHROOM_URGENT_PCT     70.0f   /* holding pose + warning bubbles    */
 #define BATHROOM_GRACE_MS       90000UL /* after urgent, before an accident  */
 #define BATHROOM_WARN_MS        20000UL /* min gap between warning bubbles   */

@@ -17,6 +17,8 @@
 #include "pages.h"
 #include "gamerec.h"
 #include "forms.h"
+#include "evolve.h"
+#include "journal.h"
 #include "games.h"
 #include "diag.h"
 #include <math.h>
@@ -250,13 +252,18 @@ static void finish_game(uint16_t score, uint32_t ms, float happy)
     s_elapsed_ms = ms;
 
     const uint32_t now = rtc_trusted() ? rtc_now() : (millis() / 1000);
+    const uint16_t prev_best = gamerec_get()->best[s_game];
+    const bool first_play = (gamerec_get()->plays[s_game] == 0);
     s_multiplier = gamerec_record_play(s_game, score, ms, now);
+    if (first_play)            journal_add(JM_FIRST_GAME, s_game, 0);
+    else if (score > prev_best) journal_add(JM_RECORD, s_game, score);
 
     float h = happy * s_multiplier;
     if (h < 0.0f) h = 0.0f;          /* playing must never cost happiness */
     s_happy_awarded = h;
 
     pet_state_t *p = pet_mutable();
+    p->games_played++;      /* engagement feeds the care score */
     p->happiness += h;
     if (p->happiness > 100.0f) p->happiness = 100.0f;
 
@@ -374,6 +381,10 @@ void games_force_exit(void) { games_exit(); }
 void games_launch(uint8_t game)
 {
     if (s_active || game >= GAME_COUNT) return;
+    if (pet_get()->stage == STAGE_EGG) {
+        Serial.println("game ignored: still an egg");
+        return;
+    }
     s_game  = game;
     s_active = true;
 
