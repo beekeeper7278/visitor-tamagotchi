@@ -211,14 +211,56 @@
  */
 #define BSP_PMIC_VERIFIED  0
 
-/* --- (F) ES8311 audio -----------------------------------------------------
- * Needed before audio can be anything but a no-op:
- *   - I2S BCLK / LRCK / DOUT / DIN GPIOs
- *   - MCLK GPIO, or confirmation that MCLK is internally generated
- *   - the PA / amplifier enable line (often a TCA9554 bit on these boards)
- * v1 ships silent by design, so this blocks nothing yet.
+/* --- (F) ES8311 audio  [PHASE 10] ----------------------------------------
+ * SOURCE: waveshareteam/ESP32-S3-Touch-AMOLED-1.8, the **arduino-v2** tree -
+ * `examples/arduino-v2/libraries/Mylibrary/pin_config.h` and
+ * `examples/arduino-v2/examples/15_ES8311/15_ES8311.ino`. First-party, and
+ * the V2 tree specifically: the repo carries `examples/arduino/` for V1 and
+ * `examples/arduino-v2/` for V2, and this board is V2 (CO5300 + CST820).
+ *
+ * The same file also states our ALREADY-FROZEN pins - SDIO 4/5/6/7,
+ * SCLK 11, CS 12, SDA 15, SCL 14, 368x448 - all of which match byte for
+ * byte. That agreement is why this file is trusted for the audio pins too:
+ * it is demonstrably describing THIS board and not a sibling.
+ *
+ * WATCH OUT - pin_config.h contains TWO naming blocks that DISAGREE:
+ *
+ *     #define I2S_DI_IO 10        #define DOPIN  10
+ *     #define I2S_DO_IO  8        #define DIPIN   8
+ *
+ * DOPIN/DIPIN are swapped relative to I2S_DO_IO/I2S_DI_IO. The tie-break is
+ * the working example, which uses the I2S_* names:
+ *
+ *     i2s.setPins(I2S_BCK_IO, I2S_WS_IO, I2S_DO_IO, I2S_DI_IO, I2S_MCK_IO);
+ *
+ * and Arduino's signature is setPins(bclk, ws, dout, din, mclk). So DOUT
+ * (ESP32 -> codec, playback) is GPIO 8 and DIN (mic -> ESP32) is GPIO 10.
+ * Do not "fix" this from the DOPIN/DIPIN block.
+ *
+ * MCLK is a REAL PIN, not internally generated: the example sets
+ * mclk_from_mclk_pin = true with mclk_frequency = sample_rate * 256.
+ *
+ * The PA enable is a PLAIN GPIO (46), driven HIGH to enable - NOT a TCA9554
+ * bit, which is what the old note here guessed. None of 8/9/10/16/45/46
+ * collides with anything else this board uses.
+ *
+ * The ES8311 answers at 0x18 (CE low), which matches the I2C scan. It shares
+ * the Wire bus on port 0; the vendored driver in src/es8311 talks through
+ * esp32-hal-i2c, the same HAL Wire uses, so there is no second I2C driver.
  */
-#define BSP_AUDIO_VERIFIED 0
+#define BSP_I2S_MCLK       16
+#define BSP_I2S_BCLK        9
+#define BSP_I2S_WS         45     /* LRCK                                   */
+#define BSP_I2S_DOUT        8     /* ESP32 -> codec  (playback)             */
+#define BSP_I2S_DIN        10     /* codec  -> ESP32 (microphone)           */
+#define BSP_AUDIO_PA_EN    46     /* plain GPIO, HIGH = amplifier on        */
+#define BSP_ES8311_ADDR    0x18
+
+/* ** VERIFIED 2026-08-30 ** - a 1 kHz tone, a MUTE/LOW/MEDIUM/HIGH sweep,
+ * the Visitor voice and nine effects were all HEARD on this board, with MUTE
+ * audibly silent. es8311_init() returned OK and the I2S clocking configured
+ * without error. Pins confirmed good as a set. */
+#define BSP_AUDIO_VERIFIED 1
 
 /* --- (G) PCF85063 backup power ---  ** VERIFIED 2026-08-28 ** ------------
  * TESTED ON HARDWARE: the RTC keeps time across COMPLETE USB power removal.

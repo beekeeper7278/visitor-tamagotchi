@@ -13,6 +13,7 @@
 #include "forms.h"
 #include "config.h"
 #include "bsp.h"
+#include "audio.h"
 #include "storage.h"
 #include "diag.h"
 #include "ui_diag.h"
@@ -103,6 +104,9 @@ void setup()
     diag_banner();
 
     bsp_init();
+    /* Audio is optional by design: a board where the codec does not come
+     * up still runs the whole game, just silently. */
+    audio_init();
     storage_init();
 
     diag_i2c_report();          /* 1 */

@@ -19,6 +19,7 @@
 #include "setclock.h"
 #include "games.h"
 #include "gamerec.h"
+#include "audio.h"
 #include "evolve.h"
 #include "discipline.h"
 #include "journal.h"
@@ -1217,6 +1218,58 @@ void diag_identity_report(void)
     Serial.println("-----------------------------------------------------------");
 }
 
+/* TAB sub-commands. Reads ONE more character, with a short wait so a human
+ * typing TAB-then-key is not treated as two separate commands. */
+static void diag_audio_menu(void)
+{
+    Serial.println();
+    Serial.println("AUDIO (TAB then):  t tone   r report   s level sweep");
+    Serial.println("                   0 mute  1 low  2 medium  3 high");
+    Serial.println("                   v voice sample   p play a few effects");
+    const uint32_t t0 = millis();
+    while (!Serial.available() && millis() - t0 < 4000) delay(10);
+    if (!Serial.available()) { Serial.println("  (timed out)"); return; }
+    const int k = Serial.read();
+    switch (k) {
+        case 't': audio_test_tone(600, 1000); break;
+        case 'r': audio_report(); break;
+        case '0': audio_set_volume(VOL_MUTE); audio_play(SND_HAPPY); break;
+        case '1': audio_set_volume(VOL_LOW);  audio_play(SND_HAPPY); break;
+        case '2': audio_set_volume(VOL_MED);  audio_play(SND_HAPPY); break;
+        case '3': audio_set_volume(VOL_HIGH); audio_play(SND_HAPPY); break;
+        case 's': {
+            /* Sweep the levels so MUTE can be HEARD to be silent rather than
+             * merely reported as silent. */
+            static const char *NM[] = {"MUTE","LOW","MEDIUM","HIGH"};
+            for (uint8_t l = 0; l < VOL_COUNT; l++) {
+                Serial.printf("  level %s\n", NM[l]);
+                audio_set_volume(l);
+                audio_play(SND_HAPPY);
+                delay(900);
+            }
+            audio_set_volume(VOL_MED);
+            break;
+        }
+        case 'v':
+            Serial.println("  voice: 1, 2, 3 syllables then a question");
+            audio_voice(1, false); delay(700);
+            audio_voice(2, false); delay(800);
+            audio_voice(3, false); delay(900);
+            audio_voice(2, true);
+            break;
+        case 'p': {
+            const snd_t demo[] = { SND_UI_TAP, SND_EAT, SND_REFUSE_FOOD,
+                                   SND_CAKE_YAY, SND_CLEAN_PUFF, SND_GAME_CORRECT,
+                                   SND_GAME_WRONG, SND_HATCH_CHIME, SND_EVOLVE };
+            for (unsigned i = 0; i < sizeof(demo)/sizeof(demo[0]); i++) {
+                audio_play(demo[i]); delay(650);
+            }
+            break;
+        }
+        default: Serial.printf("  ? unknown audio key '%c'\n", (char)k); break;
+    }
+}
+
 void diag_help(void)
 {
     Serial.println();
@@ -1319,6 +1372,13 @@ void diag_serial_tick(void)
             case 'o': diag_rtc_clear_os();      break;
             case 'f': diag_flush_report();      break;
             case 'm': diag_lvgl_heap_report();  break;
+            /* --- PHASE 10 audio, behind a TAB prefix -----------------------
+             * Every single printable key in this switch is already taken -
+             * the console ran out of namespace two phases ago. TAB (0x09) is
+             * outside the printable range and was free, so audio commands are
+             * "TAB then a letter" rather than stealing a key something else
+             * already answers to. */
+            case '\t': diag_audio_menu();        break;
             case 'b': diag_brightness_sweep();  break;
             case 'd': diag_i2c_report();        break;
             case 's': diag_storage_report();    break;
