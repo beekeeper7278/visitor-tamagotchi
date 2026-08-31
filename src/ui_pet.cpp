@@ -877,11 +877,19 @@ void ui_pet_tick(void)
             s_pos_y = s_walk_from_y + (lv_coord_t)((s_walk_to_y - s_walk_from_y) * te);
             /* two-phase squash + bob, so it reads as steps not a slide */
             const float ph = t * 6.2831853f * 2.0f;
-            /* A footstep tick, rate-limited HERE rather than at the call
-             * site: this runs every animation frame, and a step sound per
-             * frame would be a buzz, not footsteps. */
+            /* FIRE THE STEP WHERE THE FOOT LANDS. The bob is |sin(ph)|, so
+             * the Visitor is at its lowest - in contact - every time sin(ph)
+             * crosses zero. A free-running timer drifts against the
+             * animation, and a step you SEE a moment before you HEAR it is
+             * worse than silence. The gap guard only stops a very short walk
+             * from machine-gunning; the phase does the real work. */
+            static float    s_prev_sin;
             static uint32_t s_step_ms;
-            if (now - s_step_ms >= STEP_SOUND_GAP_MS) {
+            const float sn = sinf(ph);
+            const bool  contact = (s_prev_sin < 0.0f && sn >= 0.0f) ||
+                                  (s_prev_sin > 0.0f && sn <= 0.0f);
+            s_prev_sin = sn;
+            if (contact && now - s_step_ms >= STEP_SOUND_GAP_MS) {
                 s_step_ms = now;
                 audio_play(SND_STEP);
             }

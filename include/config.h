@@ -836,10 +836,11 @@
  * a child's attention and short enough that it does not become a nag. */
 #define EGG_COUNTDOWN_SEC       5
 
-/* Footsteps are a quiet tick, and deliberately SLOWER than the animation's
- * own two-step cycle - the point is a suggestion of walking, not a
- * synchronised foley track. */
-#define STEP_SOUND_GAP_MS       260UL
+/* Footsteps fire on the animation's own contact phase, not on a timer - see
+ * the WALK case in ui_pet.cpp. This is only a floor, so a very short walk
+ * cannot machine-gun; it is deliberately well under the natural step
+ * interval so it never becomes the thing setting the rhythm. */
+#define STEP_SOUND_GAP_MS       120UL
 
 /* SLEEP AUDIO. Night is SILENT: this device sits in a child's bedroom and a
  * charming snore at 2 pm is a serious problem at 2 am. Only a BABY, only a
@@ -853,6 +854,33 @@
  * wall is blocked every frame by design. */
 #define MZ_BUMP_V               1.2f
 #define MZ_BUMP_GAP_MS          280UL
+
+/* --- Settings page controls [PHASE 10] ----------------------------------
+ * The three Phase 10 cards shipped at 46 px tall and were reported as fiddly
+ * to hit - fairly: 46 px on a 448 px panel is about 4 mm, and this is a
+ * device a child uses one-handed while holding it.
+ *
+ * They are now 56 px tall and wider, which needed room that was not there.
+ * It came from the info block above, which listed BOTH "stage" and "looks" -
+ * and forms_long_name() already carries the tier ("Baby", "Good Kid",
+ * "Bright Teen", "Best Adult"), so the stage line was restating its
+ * neighbour. Dropping it is a simplification, not a sacrifice.
+ *
+ *   Set Date & Time  118 .. 170
+ *   info (3 lines)   182 .. ~248
+ *   Volume           258 .. 314
+ *   Recalibrate      320 .. 376
+ *   Gravity          382 .. 438     (10 px clear of the 448 panel)
+ *
+ * Asserted below rather than eyeballed, like every other layout here. */
+#define SET_CARD_H              56
+#define SET_CARD_X              24
+#define SET_CARD_W              (BSP_LCD_W - 2 * SET_CARD_X)
+#define SET_CARD_GAP            6
+#define SET_VOLUME_Y            258
+#define SET_CALIB_Y             (SET_VOLUME_Y + SET_CARD_H + SET_CARD_GAP)
+#define SET_GRAVITY_Y           (SET_CALIB_Y  + SET_CARD_H + SET_CARD_GAP)
+#define SET_BOTTOM_CLEAR        (BSP_LCD_H - (SET_GRAVITY_Y + SET_CARD_H))
 
 #define EGG_HATCH_SHELL_TOP     (EGG_HATCH_ROOT_Y + EGG_SHELL_TOP_IN_BOX)
 #define EGG_HATCH_LBL_GAP       (EGG_HATCH_SHELL_TOP - (EGG_HATCH_LBL_Y + EGG_HATCH_LBL_H))

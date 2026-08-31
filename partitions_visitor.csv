@@ -1,0 +1,24 @@
+# Visitor - 16 MB, NO OTA.
+#
+# WHY A CUSTOM TABLE. The stock default_16MB.csv reserves TWO 6.5 MB app
+# slots for over-the-air updates. This device has no OTA path and never will:
+# it is flashed over USB by a person holding it. That second slot was 6.5 MB
+# of dead flash, and the voice pack needed exactly that kind of room - at
+# 11 kHz the speech was intelligible but telephone-thin, and 16 kHz did not
+# fit in the 3.37 MB the stock table left for a filesystem.
+#
+# NVS IS UNTOUCHED - same offset 0x9000, same size 0x5000. That is deliberate
+# and load-bearing: NVS holds the live Visitor, its Visit Records, its game
+# records and the Phase 10 settings. Move or resize it and the pet is gone.
+# If this table is ever edited again, that line changes LAST and only with a
+# very good reason.
+#
+# otadata is kept even though nothing does OTA: the upload writes boot_app0
+# there, which is what tells the bootloader to run the factory image.
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xe000,   0x2000,
+factory,    app,  factory,  0x10000,  0x400000,
+littlefs,   data, spiffs,   0x410000, 0xBE0000,
+coredump,   data, coredump, 0xFF0000, 0x10000,

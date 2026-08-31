@@ -6,3 +6,6 @@
 *.factory.bin
 *.map
 .claude/settings.local.json
+__pycache__/
+*.pyc
+data/*.bin

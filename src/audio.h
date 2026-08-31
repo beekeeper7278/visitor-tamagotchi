@@ -8,30 +8,27 @@
  * Mute honest and what lets the Visitor's voice mature by stage without a
  * single call site changing.
  *
- * WHY SYNTHESIS RATHER THAN SAMPLES. The brief asked for the tradeoff to be
- * compared rather than assumed:
+ * TWO VOICES, AND WHY. The Visitor speaks with RECORDED SPEECH when a clip
+ * exists for the line, and with a procedural chirp voice when one does not.
  *
- *   prerecorded speech   Real words, and by far the best sound - but a cute
- *                        line is ~0.5 s; at 16 kHz 16-bit mono that is 16 KB
- *                        each, and the dialogue tables already hold well over
- *                        a hundred lines across traits and forms. Even at
- *                        4-bit ADPCM the voice alone would run to megabytes,
- *                        and every new line would need re-recording in four
- *                        stage voices. It cannot cover DYNAMIC text (the
- *                        farewell note is assembled at runtime) at all.
- *   shared material +    Cheaper, but still needs a recorded base, and
- *   pitch/rate shift     pitch-shifting speech badly is worse than not
- *                        speaking.
- *   TTS on-device        The brief is explicit: do not ship robotic TTS just
- *                        so the Visitor technically speaks. Agreed - on this
- *                        part it would sound like a fax machine.
+ * The chirp voice came first and went through two generations - pitched tone
+ * bursts, then a formant synth with jitter, glides and consonants. The second
+ * genuinely sounds like a mouth. It still cannot say "I did a mess. It's
+ * art.", because formant babble contains no WORDS, and no further tuning was
+ * ever going to change that. Reported from the sofa as "a bunch of beeps and
+ * boops", which was exactly right.
  *
- * So: PROCEDURAL VOICE. Short pitched chirp-bursts with a vowel-ish wobble,
- * a per-stage pitch/rate profile and a per-personality delivery. It is a few
- * KB of code and no assets, it covers every line including dynamic text, and
- * it reads as one cute character growing up rather than four recordings.
- * Actual words stay in the speech bubble, which is where a pre-reader's adult
- * is reading them from anyway.
+ * So fixed lines are prerendered into a pack (see voice.h) that lives in the
+ * previously unused 3.37 MB spiffs partition: 258 lines of 4-bit ADPCM at
+ * 11 kHz, about 2 MB. One asset set covers all four stages because playback
+ * is resampled, which raises pitch and tempo together the way a smaller
+ * creature actually sounds.
+ *
+ * The chirp voice is NOT dead weight - it is the fallback, and it earns its
+ * place three times over: lines assembled at runtime (the farewell note) can
+ * never be prerendered; a board with no pack flashed still has a Visitor that
+ * vocalises; and the wordless moments want a noise, not a sentence.
+ *
  * ======================================================================== */
 
 #include <stdint.h>
@@ -81,13 +78,26 @@ bool audio_ready(void);
 /* Fire and forget. Never blocks the UI: the mixer runs on its own task. */
 void audio_play(snd_t s);
 
-/* The Visitor's own voice. `syllables` is how chatty this line is; the pitch
- * and rate come from the CURRENT stage and personality, so one call site
- * sounds right from Baby to Adult. */
+/* SAY A LINE. Prefers the recorded clip for this exact text; falls back to
+ * the chirp voice when there is no recording (a runtime-assembled line, or no
+ * pack flashed at all). Call sites do not know or care which happened. */
+void audio_say(const char *text);
+
+/* The chirp voice on its own. Still used directly for the wordless moments -
+ * and it is what audio_say() falls back to. */
 void audio_voice(uint8_t syllables, bool question);
 
 void    audio_set_volume(uint8_t level);   /* VOL_* */
 uint8_t audio_volume(void);
+
+/* Speak a line at a FORCED stage pitch, for A/B-ing the four voices without
+ * having to age a real Visitor to hear them. Stage is STAGE_BABY..ADULT. */
+void audio_say_as(const char *text, uint8_t stage);
+
+/* Speak from a SPECIFIC pack (VOICE_BOY / VOICE_GIRL), ignoring the
+ * Visitor's own gender. Diagnostics only: it is the sole way to hear the
+ * pack this Visitor is not using without destroying it to hatch another. */
+void audio_say_from(const char *text, uint8_t pack);
 
 /* Bring-up only: a plain 1 kHz tone, the thing a human ear can confirm. */
 void audio_test_tone(uint16_t ms, uint16_t hz);

@@ -14,6 +14,7 @@
 #include "config.h"
 #include "bsp.h"
 #include "audio.h"
+#include "voice.h"
 #include "settings.h"
 #include "motion.h"
 #include "storage.h"
@@ -117,6 +118,8 @@ void setup()
      * up still runs the whole game, just silently. */
     audio_init();
     audio_set_volume(settings_volume());
+    /* Optional: no pack simply means the chirp voice. */
+    voice_begin();
     motion_begin();
     storage_init();
 

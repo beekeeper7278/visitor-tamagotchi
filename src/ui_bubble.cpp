@@ -297,15 +297,10 @@ bool ui_bubble_say(bubble_tier_t tier, const char *text)
      * cooled down or preempted away - the sound and the words are the same
      * event or they are nothing.
      *
-     * Syllables are estimated from the length rather than counted: the point
-     * is that a long line sounds longer than a short one, and four chirps is
-     * the cap regardless, so precision would buy nothing. A line ending in
-     * '?' lifts at the end. */
-    {
-        size_t n = strlen(text);
-        uint8_t syl = (n <= 8) ? 1 : (n <= 18) ? 2 : (n <= 30) ? 3 : 4;
-        audio_voice(syl, text[n - 1] == '?');
-    }
+     * audio_say() speaks the recorded clip for this exact text when there is
+     * one and chirps otherwise, so this call site never has to know which
+     * kind of voice the Visitor currently has. */
+    audio_say(text);
 
     Serial.printf("BUBBLE ACCEPT   %-11s \"%s\"  (%lu ms%s)\n",
                   ui_bubble_tier_name(tier), text, (unsigned long)dur,

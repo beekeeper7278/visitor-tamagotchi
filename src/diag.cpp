@@ -20,6 +20,7 @@
 #include "games.h"
 #include "gamerec.h"
 #include "audio.h"
+#include "voice.h"
 #include "settings.h"
 #include "motion.h"
 #include "evolve.h"
@@ -1237,6 +1238,8 @@ static void diag_phase10_menu(void)
     Serial.println("PHASE 10 (TAB then):");
     Serial.println("  audio : t tone   r report   s level sweep   v voice   p effects");
     Serial.println("          0 mute   1 low   2 medium   3 high");
+    Serial.println("  voice : w stage ladder   k real lines   V pack report");
+    Serial.println("          b BOY pack        G GIRL pack   x coverage sweep");
     Serial.println("  motion: m report   c calibrate   g toggle gravity   n settings");
     const uint32_t t0 = millis();
     while (!Serial.available() && millis() - t0 < 4000) delay(10);
@@ -1279,6 +1282,118 @@ static void diag_phase10_menu(void)
                                    SND_GAME_WRONG, SND_HATCH_CHIME, SND_EVOLVE };
             for (unsigned i = 0; i < sizeof(demo)/sizeof(demo[0]); i++) {
                 audio_play(demo[i]); delay(650);
+            }
+            break;
+        }
+        case 'w': {
+            /* THE VOICE LADDER: one line, four stage pitches, back to back.
+             * The only honest way to judge "same character growing up" is to
+             * hear them next to each other without aging a real Visitor. */
+            static const char *L = "I did a mess. It's art.";
+            static const char *NM[] = {"Baby","Kid","Teen","Adult"};
+            for (uint8_t st = 0; st < 4; st++) {
+                Serial.printf("  %-5s : \"%s\"\n", NM[st], L);
+                audio_say_as(L, st);
+                delay(2600);
+            }
+            break;
+        }
+        case 'k': {
+            /* A handful of REAL dialogue lines, spoken as the Visitor would
+             * say them at its current stage. */
+            static const char *LINES[] = {
+                "The floor was too clean.",
+                "Again! Again!",
+                "Is it night already?",
+                "WHY AM I UPSIDE DOWN?!",
+                "Can you flip me back?",
+                "I'm getting dizzy!",
+                "Ahh, that's better!",
+            };
+            for (unsigned i = 0; i < sizeof(LINES)/sizeof(LINES[0]); i++) {
+                Serial.printf("  \"%s\"\n", LINES[i]);
+                audio_say(LINES[i]);
+                delay(2400);
+            }
+            break;
+        }
+        case 'V': voice_report(); break;
+        case 'x': {
+            /* VOICE COVERAGE SWEEP.
+             *
+             * Asks the RUNTIME which lines the Visitor can say, then asks the
+             * pack whether each has a clip. That direction matters: the pack
+             * generator scans the source itself, so it cannot detect its own
+             * blind spots. The first pack scanned dialogue.cpp alone and
+             * silently omitted every line in strings.cpp - including the most
+             * common ones - and the only symptom was a bubble that beeped.
+             * This is the check that would have caught it in seconds. */
+            uint16_t total = 0, missing = 0;
+            Serial.println();
+            Serial.println("=== VOICE COVERAGE ========================================");
+            for (uint8_t t = 0; t < BUBBLE_TIER_COUNT; t++) {
+                /* strings_at() WRAPS (i % n) and never returns NULL, so it
+                 * cannot terminate a loop - asking it to hung the device on
+                 * the first run of this sweep. strings_count() is the bound. */
+                const uint8_t n = strings_count((bubble_tier_t)t);
+                for (uint8_t i = 0; i < n; i++) {
+                    const char *line = strings_at((bubble_tier_t)t, i);
+                    if (!line || !*line) continue;
+                    total++;
+                    uint32_t o, l;
+                    if (!voice_lookup(VOICE_BOY, line, &o, &l)) {
+                        missing++;
+                        Serial.printf("  MISSING (strings t%u): \"%s\"\n", t, line);
+                    }
+                }
+            }
+            /* Sample the dialogue pools by asking for many draws - they are
+             * random, so repetition is how the whole pool gets seen. */
+            for (uint16_t n = 0; n < 120; n++) {
+                const char *l[] = { dialogue_shaken(), dialogue_shaken_annoyed(),
+                                    dialogue_upside_down(), dialogue_upright_relief(),
+                                    dialogue_told_off(), dialogue_food_refuse(),
+                                    dialogue_game_done(), dialogue_lights_on(),
+                                    dialogue_lights_off() };
+                for (unsigned i = 0; i < sizeof(l)/sizeof(l[0]); i++) {
+                    if (!l[i] || !*l[i]) continue;
+                    uint32_t o, ln;
+                    if (!voice_lookup(VOICE_BOY, l[i], &o, &ln)) {
+                        missing++; total++;
+                        Serial.printf("  MISSING (dialogue): \"%s\"\n", l[i]);
+                    }
+                }
+            }
+            Serial.printf("  checked %u lines, %u missing -> %s\n",
+                          total, missing, missing ? "FAIL" : "PASS");
+            Serial.println("-----------------------------------------------------------");
+            break;
+        }
+        case 'b': case 'G': {
+            /* Hear a specific gender's pack without hatching a Visitor of
+             * that gender - the only other way to check the pack this
+             * Visitor is not using would be to destroy it. */
+            const uint8_t pack = (k == 'b') ? VOICE_BOY : VOICE_GIRL;
+            /* One line from each of the four sources the pack is built
+             * from, so this audition also proves the coverage fix rather
+             * than only the voice. strings.cpp supplied the three that used
+             * to beep. */
+            static const char *LINES[] = {
+                "Again! Again!",                  /* strings.cpp  */
+                "That tickles!",                  /* strings.cpp  */
+                "I'm really hungry!",             /* strings.cpp  */
+                "The floor was too clean.",       /* dialogue.cpp */
+                "WHY AM I UPSIDE DOWN?!",         /* dialogue.cpp */
+                "Higher or lower?",               /* games.cpp    */
+                "I can see my star from here!",   /* farewell.cpp */
+                "Ahh, that's better!",            /* dialogue.cpp */
+            };
+            Serial.printf("  pack: %s\n", pack == VOICE_BOY ? "BOY (Norman)"
+                                                             : "GIRL (Kristin)");
+            for (unsigned i = 0; i < sizeof(LINES)/sizeof(LINES[0]); i++) {
+                Serial.printf("    \"%s\"\n", LINES[i]);
+                audio_say_from(LINES[i], pack);
+                delay(2600);
             }
             break;
         }

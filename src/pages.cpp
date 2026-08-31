@@ -336,6 +336,15 @@ static void calibrate_cb(lv_event_t *e)
     menu_rebuild_page();          /* so the label reflects the new state */
 }
 
+/* The Settings controls, asserted rather than eyeballed - the same rule the
+ * egg selector follows, and for the same reason: the last layout bug here
+ * was a 4 px overlap that looked perfectly fine. */
+static_assert(SET_CARD_H >= 52, "Settings controls are too small to hit reliably");
+static_assert(SET_CALIB_Y   >= SET_VOLUME_Y + SET_CARD_H, "Volume/Recalibrate overlap");
+static_assert(SET_GRAVITY_Y >= SET_CALIB_Y  + SET_CARD_H, "Recalibrate/Gravity overlap");
+static_assert(SET_BOTTOM_CLEAR >= 6, "Gravity card runs off the bottom of the panel");
+static_assert(SET_CARD_W <= BSP_LCD_W - 16, "Settings cards are wider than the panel");
+
 static void build_settings(lv_obj_t *p)
 {
     const pet_state_t *s = pet_get();
@@ -370,9 +379,13 @@ static void build_settings(lv_obj_t *p)
                 "a real date and time are entered.", 190);
     } else {
         lv_obj_t *i = lv_label_create(p);
+        /* Three lines, not five. "stage" used to sit above "looks" while
+         * forms_long_name() already names the tier - it was restating its
+         * own neighbour, and the two lines it cost are what the bigger
+         * controls below are standing on. */
         lv_label_set_text_fmt(i,
-            "age      %u years old\nstage    %s\nlooks    %s\nweight   %d g\n%s",
-            (unsigned)s->days_alive, pet_stage_name(s->stage),
+            "age      %u years old\nlooks    %s, %d g\n%s",
+            (unsigned)s->days_alive,
             forms_long_name(s->form_id), (int)(s->weight_g + 0.5f),
             s->stage == STAGE_EGG ? "not hatched yet"
                                   : (s->gender == GENDER_GIRL ? "a girl" : "a boy"));
@@ -387,16 +400,19 @@ static void build_settings(lv_obj_t *p)
      * four-option setting needs on a 368 px panel. */
     char vb[32];
     snprintf(vb, sizeof(vb), "Volume:  %s", volume_name(settings_volume()));
-    lv_obj_t *vc = card(p, vb, 36, 288, BSP_LCD_W - 72, 46, 0x9AA6C4, true);
+    lv_obj_t *vc = card(p, vb, SET_CARD_X, SET_VOLUME_Y,
+                        SET_CARD_W, SET_CARD_H, 0x9AA6C4, true);
     lv_obj_add_event_cb(vc, volume_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *cc = card(p, motion_calibrating() ? "Hold still..." : "Recalibrate Tilt",
-                        36, 340, BSP_LCD_W - 72, 46, 0x9AA6C4, true);
+                        SET_CARD_X, SET_CALIB_Y,
+                        SET_CARD_W, SET_CARD_H, 0x9AA6C4, true);
     lv_obj_add_event_cb(cc, calibrate_cb, LV_EVENT_CLICKED, NULL);
 
     char gb[32];
     snprintf(gb, sizeof(gb), "Gravity:  %s", settings_gravity_on() ? "ON" : "OFF");
-    lv_obj_t *gc = card(p, gb, 36, 392, BSP_LCD_W - 72, 46, 0x9AA6C4, true);
+    lv_obj_t *gc = card(p, gb, SET_CARD_X, SET_GRAVITY_Y,
+                        SET_CARD_W, SET_CARD_H, 0x9AA6C4, true);
     lv_obj_add_event_cb(gc, gravity_cb, LV_EVENT_CLICKED, NULL);
 }
 
