@@ -39,6 +39,23 @@ static_assert(4 * EGG_SW_W + 3 * EGG_SW_GAP_X <= BSP_LCD_W,
 static_assert(3 * EGG_GENDER_W + 2 * EGG_GENDER_GAP_X <= BSP_LCD_W,
               "the gender row is wider than the panel");
 
+/* --- the hatch-countdown layout, asserted the same way --------------------
+ * EGG_SHELL_TOP_IN_BOX must agree with what layout_egg() actually does, or
+ * every gap below is measured against a shell that is not there. */
+static_assert(EGG_SHELL_TOP_IN_BOX == PET_BOX_PX - EGG_SHELL_H - 6,
+              "shell offset must match layout_egg()");
+static_assert(EGG_HATCH_LBL_GAP >= 16,
+              "countdown label is too close to the egg");
+static_assert(EGG_HATCH_TOP_CLEAR >= 60,
+              "countdown label crowds the HUD / menu handle");
+static_assert(EGG_HATCH_SHELL_TOP + EGG_SHELL_H <= BSP_LCD_H,
+              "dropped egg falls off the bottom of the panel");
+/* Centred to within a few px: the whole point of the drop is that the group
+ * sits in the middle of the panel rather than under the HUD. */
+static_assert(EGG_HATCH_TOP_CLEAR - EGG_HATCH_BOTTOM_CLEAR <= 8 &&
+              EGG_HATCH_BOTTOM_CLEAR - EGG_HATCH_TOP_CLEAR <= 8,
+              "label+egg group is not vertically centred");
+
 static lv_obj_t *s_scr;
 static lv_obj_t *s_room_layer;
 static lv_obj_t *s_pet_layer;
@@ -139,6 +156,10 @@ void scr_main_egg_start(uint32_t secs)
     /* force: the resolved identity must be on flash BEFORE the timer is
      * allowed to run, not at the next periodic save. */
     persist_save(true);
+    /* The selectors are about to disappear, so the shell no longer has to
+     * stay up under the HUD - glide it down to the middle. Presentation
+     * only: the timer above is already running and is untouched by this. */
+    ui_pet_egg_drop(true);
     Serial.printf("EGG: hatching in %lu s\n", (unsigned long)secs);
 }
 
@@ -268,10 +289,20 @@ void scr_main_egg_refresh(void)
     if (!is_egg) return;
 
     if (!p->egg_hatch_ts) {
+        /* Still choosing: the egg is high and the label belongs in the HUD
+         * row, because everything from 156 down is selectors. */
+        lv_obj_align(s_egg_lbl, LV_ALIGN_TOP_MID, 0, 4);
         lv_label_set_text(s_egg_lbl, "Pick a colour and boy or girl, then START");
         ui_pet_set_egg_progress(0.0f);
         return;
     }
+
+    /* Counting down. A boot part-way through the hatch arrives here without
+     * ever having pressed START, so the egg is placed at the dropped
+     * position rather than animated into it - resuming should look like the
+     * screen was never away. A drop already under way ignores this. */
+    ui_pet_egg_drop(false);
+    lv_obj_align(s_egg_lbl, LV_ALIGN_TOP_MID, 0, EGG_HATCH_LBL_Y);
 
     const uint32_t now = rtc_trusted() ? rtc_now() : (millis() / 1000);
     if (now >= p->egg_hatch_ts) { egg_hatch(); return; }

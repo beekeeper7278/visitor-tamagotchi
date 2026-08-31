@@ -10,7 +10,12 @@ Rewritten 2026-08-30 at the end of Phase 9.5.
 ACCEPTED on hardware.** The tag `phase9.5-polish-baseline` covers it together
 with the Tilt Maze regression fix that followed acceptance (see §2c).
 
-**Phase 10 has NOT been started.**
+**The two pre-Phase-10 checks are DONE and both PASSED** (evolution
+reachability at the 12 h half-life, and the snap-to-bed path). See §8.
+
+**Phase 10 has NOT been started.** It was briefly authorised on 2026-08-30 and
+the authorisation was withdrawn in the same session, before any Phase 10 work
+began — no audio discovery, no IMU work, no code. Treat it as not started.
 
 | Phase | State |
 |---|---|
@@ -216,6 +221,50 @@ New console keys: `` ` `` collision sweep, `\` press the open game's Start,
 `'` place the Visitor on the maze exit so the real win path runs. The last
 two exist because `games_launch()` only opens the intro screen, so without
 them no game round could be reached from the console at all.
+
+## 2d. Hatch-countdown layout [presentation only]
+
+`EGG_ROOT_Y` (-6) exists because the SELECTOR screen needs the room: two
+colour rows, a gender row and START fill everything below 156. The moment
+START is pressed all of that disappears, and the shell was left stranded
+under the HUD with three quarters of the panel empty below it.
+
+The countdown now DROPS the egg to `EGG_HATCH_ROOT_Y`, and the label comes
+down with it out of the HUD row:
+
+    HUD row          0 .. ~30    (mood dot left, menu handle right)
+    countdown label  142 .. 166
+    gap                          166 -> 186 = 20 px
+    egg shell        186 .. 304  (root 150 + 36 in-box, 118 tall)
+
+142 px clear above, 144 below - centred to 2 px, and every gap is
+static_asserted in `scr_main.cpp` beside the selector assertions. One of
+those assertions ties `EGG_SHELL_TOP_IN_BOX` back to what `layout_egg()`
+actually does, so the margins cannot end up measured against a shell that is
+not there.
+
+**The drop target is `PET_HOME_Y`, not a computed "middle", and that is the
+load-bearing choice**: it is the exact spot the Baby occupies when the shell
+opens, so there is nothing left to jump. Before this, `ui_pet_set_egg(false)`
+left `s_pos_y` at -6 and a newly hatched Baby appeared in the HUD and wandered
+down from there.
+
+**The non-obvious part.** `scr_main_egg_refresh()` calls `ui_pet_set_egg()`
+once a second, and that function used to re-seed `s_pos_y = EGG_ROOT_Y`
+unconditionally. Harmless while the egg had one fixed position - and fatal to
+any animation, because it would drag the shell back to the top every second
+and the drop would never visibly move. It now seeds the position only on the
+TRANSITION into egg mode. If a future change makes the egg move again, this
+is the line that will catch it.
+
+`ui_pet_egg_drop(animate)`: START animates over `EGG_DROP_MS` (700 ms,
+smoothstep); a boot that resumes a hatch already under way passes false and is
+placed directly, so resuming looks like the screen was never away.
+
+Measured on hardware: choosing y=-6; after START 4 -> 60 -> 131 -> 150;
+reboot mid-hatch snaps to 150 with no second drop; the Baby appears at 150 and
+wanders from there. Hatch duration, colour/gender selection, Surprise
+resolution, persistence and the reveal sequencing are all untouched.
 
 ## 3. Save schema
 
@@ -442,16 +491,93 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
 
 ## 8. Known bugs / open issues
 
-1. **Evolution reachability at the 12 h half-life is still UNVERIFIED**,
-   Chonky especially. All 12 forms were reachable at the old 24 h half-life;
-   nobody has re-run that survey since the rescale. Carried over from the
-   pacing pass - Phase 9.5 did not touch evolution selection.
+1. **CLOSED 2026-08-30. Evolution reachability at the 12 h half-life is
+   VERIFIED: all 12 forms are reachable.** Measured by `tools/evosurvey`,
+   which links the SHIPPED `src/evolve.cpp` and drives 24000 achievable care
+   regimes x 3 entry priors through the real accumulator, per decision:
+
+       Baby  reachable (start form)      Kids   Good 55092 / Mischief 16908
+       Teens Bright 23436 / Mellow 48660 / Rowdy 71904
+       Adults Best 3216  Sweet 24720  Playful 10944
+              Chonky 101160  Grumpy 27600  Scruffy 48360
+       RESULT: 12 of 12 -> PASS
+
+   The counts are how many swept regimes reach each form, i.e. how BROAD the
+   route is, not just whether one exists. Best is the narrowest at 3216 and
+   is meant to be. Chonky agrees with the figure the user had already
+   measured on hardware (IA ~66.8 / CS ~51.7; the survey's example lands
+   IA 67.81 / CS 37.02).
+
+   The harness was validated against the device before being trusted, the
+   same way the maze sweep was: the live pet's `<` report and the harness fed
+   with those exact accumulators agree to 0.002 on CS, exactly on BA and IA,
+   and pick the identical form at all three stages.
+
+   Then confirmed END TO END on hardware, which is the part a sweep cannot
+   do: reset, hatched, `+` EXCELLENT care re-seeded at the start of each
+   stage, aged with `%` through days 1/3/6. Every boundary picked the form
+   the harness predicted:
+
+       day 1.00  Baby -> Kid    Good Kid
+       day 3.00  Kid  -> Teen   Bright Teen
+       day 6.00  Teen -> Adult  Best
+
+   and the Journal read the whole ladder back (`Baby / Good Kid / Bright
+   Teen / Best Adult`), so the Phase 9.5 `evo_path[]` fix is holding.
+
+   WORTH KNOWING: extra good care converges hard on Best. The harness gets
+   the same lineage from three quite different good-care profiles, including
+   one playing only ONE game a day (CS 84.82). There is very little daylight
+   between "devoted" and "flawless" under the current thresholds. Not a
+   defect; a tuning question, if Best is meant to feel rarer.
+
+   Two things that look wrong in that log and are not:
+   - NO growth spurt fires at any boundary under good care. Correct: `+`
+     seeds a lean 52 g and the spurt only trims weight ABOVE the new stage
+     baseline (Kid 52 / Teen 60 / Adult 68). It takes a cake-fed pet.
+   - The finished Adult reads CS 77.84 against Best's effective 77.25.
+     `evolve_on_stage_entered()` zeroes the per-stage counters, so `engage`
+     drops to 0 immediately after selection. The form is picked at the
+     boundary and never re-derived, and the mid-Adult recheck is
+     improvement-only, so nothing regresses - but a `<` read straight after a
+     transition will always look thinner than the decision actually was.
+
+1b. **NEW, from that survey: the Grumpy branch's sleep clause is DEAD CODE.**
+   `evolve_pick_form()` reads
+
+       if (p->care_happy < 40.0f - EVO_EPS ||
+           p->care_sleep < 40.0f - EVO_EPS)   return FORM_ADULT_GRUMPY;
+
+   but `care_sleep` is seeded at 50 and `evolve_accumulate()` only ever EMAs
+   it toward 45 (lights on) or 95 (lights off). An EMA bounded below by its
+   smallest sample cannot cross 39.25. Measured with `tools/evosurvey`
+   sleepprobe: 60 days of lights-on sleep asymptotes to exactly 45.0000.
+
+   **Grumpy is still reachable** — via `care_happy`, which does reach 3.75
+   after 48 h of zero happiness, and the live test pet is a Grumpy Adult that
+   got there exactly that way. So no form is unreachable and nothing is
+   blocked. What is lost is the DESIGN INTENT that leaving the lights on all
+   night can earn a Grumpy Adult on its own; today it cannot contribute at
+   all. **Not fixed** — it is a balance change, not a defect, and the phase
+   gate says that is the user's call. The one-line options are to raise the
+   threshold above 45, or to lower the lights-on sleep sample below it.
 2. **The bathroom "next cycle target" log line** now fires and has been
    observed (`BATHROOM: next cycle target 4.55 awake hours (Adult)`), so the
    pacing pass's open question here is CLOSED.
-3. **The snap-to-bed path is still unverified on hardware.** The walk path is
-   confirmed. To test: set the clock to 20:30 with `N`, then power-cycle; the
-   log should say "already under way - straight to bed".
+3. **CLOSED 2026-08-30. The snap-to-bed path is VERIFIED on hardware.**
+   Clock set to 20:30 with `N` (live crossing took the walk path, as
+   expected: `SLEEP: bedtime (night), heading to bed`), then rebooted through
+   a full `pio run -t upload` — the only sanctioned reboot on this board.
+   The boot log took the other branch:
+
+       SLEEP: bedtime (night) already under way - straight to bed
+
+   `sim_catch_up()` clears `asleep`, so the branch re-runs at boot with
+   `s_seen_awake_window` false, which is what makes `already_late` true.
+   Post-boot state: mood Asleep, anim `sleeping`, position x=104 y=182 —
+   exactly `SLEEP_SPOT_X/Y` (BED_CX 184 - 80, BED_CY 300 - 118), so the
+   Visitor was PLACED in bed rather than left walking. No floor sleeping, no
+   wandering, no stuck transitional state.
 4. **`care_fast_forward()` passes `ctx.offline = false`,** so `T` does not
    exercise the offline accident path. Correct for what `T` means; the
    offline path is exercised by `h` / `H` / `j`.
@@ -467,10 +593,17 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
 ## 9. Exact next steps
 
 1. Nothing is outstanding for Phase 9.5. It is committed and tagged.
-2. Re-verify evolution reachability at the 12 h half-life, Chonky especially
-   (§8.1). This is the oldest open item in the project.
-3. Verify the snap-to-bed path (§8.3).
-4. Only then, and only when asked, Phase 10.
+2. DONE — evolution reachability verified, 12 of 12 forms (§8.1).
+3. DONE — snap-to-bed verified on hardware (§8.3).
+4. Awaiting a decision on the dead Grumpy sleep clause (§8.1b). Balance
+   change, deliberately not made unilaterally.
+5. Phase 10 only when asked. Nothing about it has been started.
+
+Also landed alongside the two checks: the `tools/evosurvey` harness, a
+one-line fix in `evolve_explain()` (its accumulator header printed the literal
+"24h half-life" for the whole of the 12 h era, in the one diagnostic used to
+reason about the accumulators - it now prints ACCUM_HALFLIFE_HOURS), and the
+hatch-countdown layout of §2d.
 
 ## 10. Build / flash / test
 

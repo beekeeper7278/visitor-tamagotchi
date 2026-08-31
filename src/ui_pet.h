@@ -106,6 +106,11 @@ bool ui_pet_evolving(void);
 
 /* Egg mode: the shell is drawn instead of the Visitor. Colour is cosmetic. */
 void ui_pet_set_egg(bool on, uint8_t palette);
+
+/* Drop the shell from the selector position to the Visitor's home spot once
+ * the countdown starts. Layout only - it moves nothing but pixels. Pass
+ * animate=false to place it there directly (a boot that resumes a hatch). */
+void ui_pet_egg_drop(bool animate);
 bool ui_pet_is_egg(void);
 
 /* 0..1 progress toward hatching. Drives how often the egg twitches - rare

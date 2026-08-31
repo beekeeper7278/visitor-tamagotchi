@@ -53,6 +53,10 @@ static const uint32_t BABY_BELLY[EGG_PALETTE_COUNT] = {
     0xFFC4C4, 0xE0D2FA, 0xC9E4FF, 0xCBF0CF, 0xB4EEDF, 0xFFEFC4
 };
 static uint32_t  s_egg_twitch_at, s_egg_twitch_t0;
+/* The countdown drop. s_egg_drop_t0 == 0 means "not animating": either the
+ * drop has not been asked for yet, or it has already landed. */
+static uint32_t  s_egg_drop_t0;
+static bool      s_egg_dropped;
 
 /* Shell + a lighter speckle of the same family. Cosmetic only - nothing here
  * touches evolution. */
@@ -719,16 +723,53 @@ void ui_pet_set_baby_palette(int idx)
 
 void ui_pet_set_egg(bool on, uint8_t palette)
 {
+    const bool was = s_egg_on;
     s_egg_on  = on;
     /* EGG_PAL_RAINBOW is a legal palette now, so the clamp is one wider. */
     s_egg_pal = (palette <= EGG_PAL_RAINBOW) ? palette : 0;
-    /* The egg sits HIGHER than the Visitor's home spot. The pre-hatch screen
-     * now carries two rows of colour, a gender row and START below it, and at
-     * PET_HOME_Y the shell was drawn underneath the pickers - present in the
-     * object tree, invisible in practice. EGG_ROOT_Y is derived with the rest
-     * of that layout in config.h. */
-    if (on) { s_pos_x = PET_HOME_X; s_pos_y = EGG_ROOT_Y; s_wander_on = false; }
-    else    { s_wander_on = true; }
+    if (on) {
+        /* ONLY on the transition into egg mode. scr_main_egg_refresh() calls
+         * this once a second, and re-seeding the position on every call would
+         * drag the shell back to the top mid-drop - the animation would never
+         * visibly move. It was safe to do unconditionally only while the egg
+         * had a single fixed position.
+         *
+         * The egg starts HIGHER than the Visitor's home spot because the
+         * pre-hatch screen carries two colour rows, a gender row and START
+         * below it; at PET_HOME_Y the shell was drawn underneath the pickers.
+         * Once START is pressed all of that goes and the shell drops - see
+         * EGG_HATCH_ROOT_Y in config.h. */
+        if (!was) {
+            s_pos_x = PET_HOME_X;
+            s_pos_y = EGG_ROOT_Y;
+            s_egg_dropped = false;
+            s_egg_drop_t0 = 0;
+            s_wander_on   = false;
+        }
+    } else {
+        /* The shell has just opened. Put the Visitor exactly where the shell
+         * was standing rather than leaving it at EGG_ROOT_Y, which used to
+         * drop a newly-hatched Baby into the HUD and let it wander down from
+         * there. After a drop this is already true, so nothing moves. */
+        if (was) { s_pos_x = PET_HOME_X; s_pos_y = PET_HOME_Y; }
+        s_wander_on = true;
+    }
+}
+
+/* Presentation only: glide the shell from the selector position down to the
+ * Visitor's home spot once the countdown owns the screen. `animate` is false
+ * for a boot that resumes a hatch already in progress - that should look like
+ * the screen was never away, not like the egg is dropping a second time. */
+void ui_pet_egg_drop(bool animate)
+{
+    if (s_egg_dropped) return;
+    s_egg_dropped = true;
+    if (animate) {
+        s_egg_drop_t0 = millis();
+    } else {
+        s_egg_drop_t0 = 0;
+        s_pos_y = EGG_HATCH_ROOT_Y;
+    }
 }
 
 void ui_pet_evolve_to(uint8_t new_form)
@@ -784,7 +825,25 @@ void ui_pet_set_x(lv_coord_t x)
 
 void ui_pet_tick(void)
 {
-    if (s_egg_on) { layout(); return; }
+    if (s_egg_on) {
+        /* Ease the countdown drop. layout_egg() reads s_pos_y and applies the
+         * rock and the twitch as offsets INSIDE the box, so the whole
+         * animation follows the shell down without touching its timing. */
+        if (s_egg_drop_t0) {
+            const uint32_t el = millis() - s_egg_drop_t0;
+            if (el >= EGG_DROP_MS) {
+                s_pos_y = EGG_HATCH_ROOT_Y;
+                s_egg_drop_t0 = 0;
+            } else {
+                const float t  = (float)el / (float)EGG_DROP_MS;
+                const float te = t * t * (3.0f - 2.0f * t);   /* smoothstep */
+                s_pos_y = EGG_ROOT_Y +
+                    (lv_coord_t)((EGG_HATCH_ROOT_Y - EGG_ROOT_Y) * te);
+            }
+        }
+        layout();
+        return;
+    }
     const uint32_t now = millis();
     const uint32_t el  = now - s_anim_t0;
 

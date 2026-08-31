@@ -749,3 +749,41 @@
 /* The two gaps, named so a build can assert them. */
 #define EGG_GENDER_GAP_ABOVE    (EGG_GENDER_Y - (EGG_SW_ROW1_Y + EGG_SW_H))
 #define EGG_START_DEAD_BAND     (EGG_START_Y - (EGG_GENDER_Y + EGG_GENDER_H))
+
+/* --- Hatch-countdown layout [PRESENTATION ONLY] -------------------------
+ * EGG_ROOT_Y (-6) exists because the SELECTOR screen needs the room: two
+ * colour rows, a gender row and START fill everything below 156. The moment
+ * START is pressed all of that goes away, and the shell is left stranded at
+ * the top of a panel that is now empty from 148 all the way down to 448 -
+ * three quarters of the screen, unused, with the egg crowded under the HUD.
+ *
+ * So the countdown DROPS the egg to the Visitor's own home spot. The target
+ * is PET_HOME_Y rather than a freshly-computed "middle" on purpose: it is
+ * the exact position the Baby occupies when the shell opens, so the hatch is
+ * a shell opening around a Visitor already standing where it belongs. There
+ * is nothing left to jump.
+ *
+ *   HUD row          0 .. ~30    (mood dot left, menu handle right)
+ *   countdown label  142 .. 166
+ *   gap                          166 -> 186 = 20 px
+ *   egg shell        186 .. 304  (root 150 + 36 in-box, 118 tall)
+ *
+ * The label+egg group spans 142..304 in a 448 panel: 142 px clear above,
+ * 144 below - centred to within 2 px. Both margins are asserted in
+ * scr_main.cpp rather than eyeballed, for the same reason every other gap in
+ * this block is.
+ *
+ * The shell's in-box offset is NOT a free parameter: layout_egg() places the
+ * shell at ey = PET_BOX_PX - EGG_SHELL_H - 6, and the two names below are
+ * asserted to agree with it. */
+#define EGG_SHELL_H             118
+#define EGG_SHELL_TOP_IN_BOX    (PET_BOX_PX - EGG_SHELL_H - 6)
+#define EGG_HATCH_ROOT_Y        PET_HOME_Y
+#define EGG_HATCH_LBL_Y         142
+#define EGG_HATCH_LBL_H         24
+#define EGG_DROP_MS             700     /* the glide down; timing only      */
+
+#define EGG_HATCH_SHELL_TOP     (EGG_HATCH_ROOT_Y + EGG_SHELL_TOP_IN_BOX)
+#define EGG_HATCH_LBL_GAP       (EGG_HATCH_SHELL_TOP - (EGG_HATCH_LBL_Y + EGG_HATCH_LBL_H))
+#define EGG_HATCH_TOP_CLEAR     (EGG_HATCH_LBL_Y)
+#define EGG_HATCH_BOTTOM_CLEAR  (BSP_LCD_H - (EGG_HATCH_SHELL_TOP + EGG_SHELL_H))
