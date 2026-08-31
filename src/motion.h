@@ -49,6 +49,12 @@ uint8_t motion_annoyance(void);
 
 void motion_report(void);
 
+/* Diagnostic history: arm it, handle the device however you like, then read
+ * motion_report(). Exists because a serial capture cannot be synchronised to
+ * a human's hands. Off by default; when off it costs nothing. */
+void motion_stats_reset(void);
+bool motion_stats_on(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,21 +1,17 @@
 # Visitor — Continuation / Handoff
 
-Rewritten 2026-08-30 at the end of Phase 9.5.
+Rewritten 2026-08-31 at the end of Phase 10.
 
 ---
 
 ## 0. Status
 
-**Phase 9.5 (personality, dreams, identity, refinement) is COMPLETE and
-ACCEPTED on hardware.** The tag `phase9.5-polish-baseline` covers it together
-with the Tilt Maze regression fix that followed acceptance (see §2c).
+**Phase 10 (audio, voice packs, IMU personality, tilt calibration, settings)
+is COMPLETE and ACCEPTED on hardware.** The tag `phase10-feature-baseline`
+covers it together with the two defects the verification pass found and fixed
+(see §2e). Full detail in §2e and `docs/PHASE10-AUDIO-REQUIREMENTS.md`.
 
-**The two pre-Phase-10 checks are DONE and both PASSED** (evolution
-reachability at the 12 h half-life, and the snap-to-bed path). See §8.
-
-**Phase 10 has NOT been started.** It was briefly authorised on 2026-08-30 and
-the authorisation was withdrawn in the same session, before any Phase 10 work
-began — no audio discovery, no IMU work, no code. Treat it as not started.
+Phase 9.5 remains COMPLETE and ACCEPTED, tagged `phase9.5-polish-baseline`.
 
 | Phase | State |
 |---|---|
@@ -27,32 +23,40 @@ began — no audio discovery, no IMU work, no code. Treat it as not started.
 | 8 Evolution / personality / discipline | COMPLETE, tagged |
 | 9 Journal / Visit Records / farewell / egg | COMPLETE, tagged |
 | Pacing & balance pass | COMPLETE, tagged `pacing-balance-baseline` |
-| **9.5 Personality / dreams / identity / refinement** | **COMPLETE, tagged `phase9.5-polish-baseline`** |
-| 10 IMU personality, tilt calibration, audio | NOT STARTED |
+| 9.5 Personality / dreams / identity / refinement | COMPLETE, tagged `phase9.5-polish-baseline` |
+| **10 IMU personality, tilt calibration, audio, voice** | **COMPLETE, tagged `phase10-feature-baseline`** |
 
-Full detail for 9.5 is in `docs/PHASE9.5-REQUIREMENTS.md`, including the
-eight defects the verification pass found and fixed.
+**The next step is a full v1 release-candidate bug hunt, in a FRESH context.**
+It was deliberately not started in the Phase 10 session. Nothing else is
+outstanding for Phase 10.
 
-**Do not begin Phase 10 without being asked.**
+**Do not tag v1.0.0 and do not merge to `main` without being asked.**
 
 ## 1. Git
 
-Branch `wip/phase8-9-pacing`. Nothing has ever been pushed — the user has
-said "do not push" each time, and there is no remote configured.
+Branch `wip/phase8-9-pacing`, pushed. **A remote DOES exist** — the older
+wording in this file claiming "nothing has ever been pushed / no remote
+configured" was stale and is corrected here.
 
-    HEAD    (tag: phase9.5-polish-baseline)  Phase 9.5: personality, dreams,
-                                             identity, refinement
-    496cf0c (tag: pacing-balance-baseline)   Pacing & balance pass
-    acdd3a1  WIP: Phase 8-9 and gameplay pacing pass
-    c39b3e1 (tag: phase7-games-baseline)
-    c59a2fb (tag: phase5-6-baseline)
-    7bb370b (tag: phase3-4-baseline)
-    14cb83a (tag: phase2-pet-baseline)
-    17f0727 (tag: phase1-hardware-baseline)
+    origin      https://github.com/beekeeper7278/visitor-tamagotchi.git
+    old-origin  https://github.com/beekeeper7278/tamagotghi.git   (previous repo)
+
+    HEAD    (tag: phase10-feature-baseline)  Phase 10 verification: two fixes
+                                             and the diagnostics that found them
+    ab1f5f2  Phase 10: the Visitor speaks - Piper voice packs, one per gender
+    3361bb1  Phase 10: wire audio through gameplay; formant synth voice
+    1c1ec25  Phase 10: settings record, tilt calibration, IMU personality
+    4eb8cdc  Phase 10: ES8311 audio bring-up, verified on hardware
+    7d13503 (tag: pre-phase10-baseline)      Hatch countdown drop
+    305c2b7 (tag: phase9.5-polish-baseline)
+    496cf0c (tag: pacing-balance-baseline)
 
 `main` is still at `e8726d0`. The phase gate stands: work is committed and
 tagged only after the user accepts it on hardware. Ask before committing; do
 not merge to `main` unilaterally.
+
+`pre-phase10-baseline` (`7d13503`) is the clean rollback point before any
+Phase 10 work.
 
 ## 2. What Phase 9.5 added
 
@@ -266,6 +270,275 @@ reboot mid-hatch snaps to 150 with no second drop; the Baby appears at 150 and
 wanders from there. Hatch duration, colour/gender selection, Surprise
 resolution, persistence and the reveal sequencing are all untouched.
 
+## 2e. What Phase 10 added — COMPLETE, ACCEPTED, tagged
+
+Four feature commits plus a verification commit. Accepted on hardware
+2026-08-31 after a six-section physical pass and a sixteen-item automated one.
+
+### Audio hardware — VERIFIED, and the pinout is now ground truth
+
+`BSP_AUDIO_VERIFIED` went 0 -> 1. A 1 kHz tone, the MUTE/LOW/MEDIUM/HIGH
+sweep, the voice and nine effects were all heard on this board, with MUTE
+audibly silent.
+
+    MCLK 16 (a real pin, 256x fs)   BCLK 9   WS/LRCK 45
+    DOUT 8 (ESP32 -> codec)         DIN 10 (mic -> ESP32)
+    PA enable GPIO 46, plain GPIO, HIGH = on    ES8311 @ 0x18   16000 Hz
+
+Source: waveshareteam/ESP32-S3-Touch-AMOLED-1.8, the **arduino-v2** tree
+(`Mylibrary/pin_config.h` and `examples/15_ES8311`). Trusted because the same
+file states our already-frozen display and I2C pins byte for byte. Note
+`pin_config.h` contains two naming blocks that DISAGREE — `DOPIN`/`DIPIN` are
+swapped relative to `I2S_DO_IO`/`I2S_DI_IO`; the working example uses the
+`I2S_*` names, and the BSP records this so nobody "fixes" it back. PA is a
+plain GPIO, not the TCA9554 bit an older note guessed at.
+
+**One semantic interface.** Gameplay asks for a MEANING (`SND_REFUSE_FOOD`),
+never a waveform and never the codec. Rendering runs on its own task and
+requests are DROPPED rather than blocking, so audio can never stall LVGL or
+the care tick. Verified: a 45-sound burst left the heartbeat unbroken, the
+heap flat and the task alive.
+
+**MUTE IS SILENCE AT THE SOURCE** — the digital scale is zero, not codec
+attenuation — and it gates nothing visual. A parent may leave this muted
+forever and the Visitor must still be able to communicate. The bring-up tone
+deliberately bypasses the mute gate so "you are muted" is never mistaken for
+"nothing is wired up".
+
+### Settings record, calibration, Gravity Reactions
+
+**Settings live in their own NVS key `visitors/cfg`**, versioned + CRC'd,
+20 bytes — NOT in `save_t`. Three reasons, worst first: `save_t` is 433 bytes
+against a 448 budget and the static_asserts fail at 448; these settings belong
+to the DEVICE, so a new Visitor or an `X` must not reset the volume a parent
+chose or the calibration a child captured; and the pet blob is rewritten every
+few minutes, which is no place for data that changes once in a blue moon. Same
+reasoning that put Visit Records aside. A field out of range is treated as
+corruption of that FIELD, not the record.
+
+**MOTION is not a second IMU driver.** It reads through
+`diag_imu_read_screen()`, the one accessor applying the FROZEN raw->screen
+transform, then through the SAME display-frame adapter Tilt Maze established
+(`right = +gy`, `down = -gx`) — a swap AND a vertical negation, not a tidy
+rotation. Calibration is applied ON TOP as a user offset; the frozen signs are
+untouched.
+
+    gravity slide  dead zone 0.15 g (~9 deg); tilt BEYOND it drives the accel.
+                   Edges stop AT the edge and dump velocity into a squash.
+    upside down    screen +Z points INTO the panel, so z < -0.65 means the
+                   panel faces the floor. 1.2 s debounce; relief only if it
+                   lasted > 2.5 s.
+    shake          a JERK (fast CHANGE in magnitude), not a large reading.
+                   Carrying tilts a lot and jerks little.
+    annoyance      rises with handling, decays 2/s, FLAVOUR ONLY: no
+                   accumulator, no form choice, no evolution, no visit quality.
+
+**GRAVITY OFF gates AMBIENT behaviour ONLY.** Verified again in this pass:
+with it off the IMU still reads, calibration still runs, Tilt Maze is
+untouched, and no annoyance can accumulate — the event counters sit downstream
+of the `blocked` early-return, so that is structural, not incidental.
+Default ON.
+
+**CALIBRATION rejects a capture taken while moving** (max spread 0.18 g over
+1.4 s / 24 samples). A calibration recorded mid-wave silently tilts every
+future reading and would be experienced as a broken Visitor rather than a bad
+capture. Verified: a deliberately unsteady capture was refused; a steady one
+at an unusual angle was stored, made that angle neutral, and survived a
+reboot byte-identical.
+
+### Voice packs, gender and the stage ladder
+
+**Recorded speech replaces the chirp voice for every fixed line.** The chirp
+voice went through two generations — pitched tone bursts, then a formant synth
+with jitter, glides and consonants. The second genuinely sounds like a mouth,
+and it still could not say "I did a mess. It's art.", because formant babble
+contains no WORDS. That is inherent, not a tuning failure.
+
+**TWO PACKS, ONE PER GENDER.** Norman (boy) and Kristin (girl), both Piper
+models trained on LibriVox recordings and both **public domain** — a
+deliberate requirement, since Apple's system voices sound fine but could never
+ship. **Both stay mounted** (about 6 KB of PSRAM) and gender picks per line,
+so a Visitor hatching the other way needs no reload and no reboot. Verified in
+this pass through the PRODUCTION `audio_say()` path, with the Visitor's own
+gender printed before and after and unchanged.
+
+Gender remains PRESENTATION ONLY: a voice is presentation, exactly like the
+egg colour tinting the Baby, and it reaches no accumulator, form choice, care
+rate, discipline roll or evolution path.
+
+**Lines are keyed by a hash of their text** — no ids, no table to keep in
+sync. A line with no clip falls back to the chirp voice, so a stale or missing
+pack degrades rather than breaks, and the firmware runs fine with no pack
+flashed at all.
+
+**Voice settings are hardcoded** so a re-render reproduces the approved voice:
+pitch x1.46, pace x1.15, noise 0.70. Pitch and pace are INDEPENDENT — the clip
+is synthesised at `length_scale = pace * pitch` and resampled up by `pitch`,
+which divides the duration back out, so slowing down costs nothing in
+cuteness.
+
+**The stage ladder is only 7% wide** (Baby 1.00 -> Kid 0.98 -> Teen 0.955 ->
+Adult 0.93) and that is deliberate: resampling moves pitch and TEMPO together,
+so a wide ladder would leave the Adult speaking noticeably slower than the
+Baby, and the pace was tuned for intelligibility. Formants stay well above
+adult human values at every stage — a small head has a short vocal tract, and
+that is what keeps the Adult cute rather than a realistic grown human. Only
+the fundamental comes down with age, so it reads as one character growing up.
+
+**REPARTITIONED, because 16 kHz did not fit.** The stock table reserved two
+6.5 MB OTA app slots; this device is flashed over USB by hand and has no OTA
+path, so the second slot was dead flash. `partitions_visitor.csv` drops it:
+filesystem 3.37 MB -> 11.88 MB, app capped at 4 MB so an oversized firmware
+fails the BUILD rather than the flash. **NVS stays at 0x9000 size 0x5000,
+untouched and load-bearing** — verified across the change by dumping the
+Visitor before and after.
+
+294 clips per pack, 16 kHz 4-bit IMA ADPCM, 4.01 + 4.07 MB of 11.88 MB.
+**The packs are generated artifacts, NOT in git** (`data/*.bin` is ignored):
+~4 MB each, reproducible in ~30 s per voice. See `tools/voicepack/README.md`.
+Flash them with `pio run -t uploadfs` (~80 s; does NOT touch NVS).
+
+### Gameplay and game audio
+
+Phase 7 left `games_sfx()` as a stub with every call site already in place, so
+all four games came alive by implementing one function. **Memory is the
+exception**: it wants a DISTINCT pitch per pad, reproduced when the player
+taps, or the sequence is unhearable — so the pads get a major arpeggio and
+bypass `games_sfx()`. A wrong tap sounds its OWN note first, then the verdict,
+so a wrong note is audible AS a wrong note.
+
+**Rate limits where the naive wiring would buzz:** footsteps are limited in
+the walk animation itself (it runs every frame), and the maze wall bump is
+limited because a player hugging a wall is legitimately blocked every frame.
+
+The voice is hooked at the point a bubble is ACCEPTED, not where one is
+requested, so it can never play for a line that was suppressed, cooled down or
+preempted away. **Sound and words are the same event or neither happens.**
+
+### Sleep audio rules
+
+**Night is silent. Only a BABY, only on a DAYTIME nap, at most 2 snores, at a
+randomised 45–90 s gap.** A charming snore at 2 pm is a serious problem at
+2 am, and this device sits in a child's bedroom overnight.
+
+The gate requires the Visitor to be asleep, the latched period to be a nap,
+**the CLOCK to currently say daytime-nap**, the stage to be Baby, budget left,
+and the volume not muted. The clock term is load-bearing — see §2e defect 1
+below. `care_report()` prints the whole gate, so "is it going to snore
+tonight" is answerable in one keystroke instead of by sitting up and
+listening.
+
+### Hatch countdown audio
+
+The last `EGG_COUNTDOWN_SEC` (5) seconds chirp once per second, fired on the
+second BOUNDARY rather than per refresh — `scr_main_egg_refresh()` runs only
+*approximately* once a second, and a countdown that double-beeps or skips is
+worse than none. The chime lands as **beat 0 of the hatch**, before the reveal
+banner and well before the first words, so the three beats stay strictly
+ordered and nothing overlaps.
+
+### Diagnostics added (console, TAB prefix)
+
+The single-key namespace filled up in Phase 9, so Phase 10 sits behind TAB.
+
+    t tone      r audio report   s level sweep   v chirp voice   p effects
+    0/1/2/3 volume MUTE/LOW/MED/HIGH
+    w stage ladder     k real lines      V pack report    x coverage sweep
+    b BOY pack         G GIRL pack
+    y gender pack switch, LIVE, through the production audio_say() selector
+    f chirp fallback, via a forced lookup miss - no filesystem damage
+    h hatch countdown + chime, with no hatch
+    q per-game audio sweep
+    L speak any line you type
+    m motion report    c calibrate      g toggle gravity  n settings
+    S arm the motion history recorder
+    R restore the clock to 16:00 (awake band, after N/G/A)
+
+Everything here is NON-DESTRUCTIVE: the Visitor is never hatched, re-gendered
+or ended to test a sound. `audio_set_pack_override()` and
+`voice_set_force_miss()` are the two test seams that make that possible, and
+both are diagnostic-only — nothing in gameplay may read them.
+
+**The motion history recorder (`TAB S` then `TAB m`) exists for a reason worth
+keeping.** Synchronising a serial capture to a human's hands does not work:
+two 90 s windows both caught a board sitting flat on a desk, because the flip
+happened while the console was not looking. The DEVICE records the extremes
+instead — z/right/down ranges, peak tilt and jerk, event counts, blocked
+ticks, and the **longest CONTINUOUS hold** past three z levels. That last one
+is the measurement that matters: min/max conflates a shake spike (which rails
+the accelerometer at its +/-4 g full scale in milliseconds) with a steady
+hold, and the trigger only cares about the latter.
+
+### The two defects the verification pass found and fixed
+
+**1. A Baby could snore at night.** `s_sleep_was_nap` is latched on sleep
+ENTRY, and entry is SKIPPED when the Visitor is already asleep — so a nap
+carrying across into the evening left the flag still reading "nap" at 20:30.
+Observed exactly that way: the gate read `was_nap 1` at night, and only an
+exhausted snore budget happened to keep it quiet. The gate now ALSO requires
+the clock to say daytime-nap, so night is silent by construction rather than
+by luck. The latched flag is kept (the wake-up still needs to know which kind
+of sleep it was) but it can no longer authorise sound on its own.
+
+Verified before/after: in nap `clock_nap 1 -> SNORES ALLOWED`; jumped to night
+still asleep with the budget still at 2, `clock_nap 0 -> silent`, and 110 s
+produced nothing. Pre-fix that exact state would have snored within 45–90 s.
+
+**2. The voice coverage sweep was lying about its own coverage.** `total` was
+incremented only inside the MISS branch, so every successful lookup went
+uncounted and a sweep over a thousand lookups reported "21 checked". It also
+sampled 9 of the 18 dialogue selectors — dreams, the hatch greeting,
+`food_yum`, `mischief`, `wake`, `stink` and `sleepy_poke` were never asked
+about — and it only ever checked the BOY pack.
+
+Now: 179 distinct lines, deduplicated by hash, across BOTH packs (358
+lookups), 0 missing. **A verification tool that understates its own coverage
+invites exactly the false confidence it exists to prevent.**
+
+While being fixed it raised one FALSE alarm worth recording: it enumerated
+`MIS_NONE`, whose `dialogue_mischief()` default is `"Hehe."` — a line
+`discipline_misbehave()` early-returns before ever reaching, so it is
+correctly absent from the pack. The sweep now enumerates from `MIS_NONE + 1`.
+
+### What the sweep does NOT cover, stated plainly
+
+The dialogue selectors are flavoured by trait AND form, and a trait pool wins
+about 70% of draws — so a sweep from a live Visitor can only reach ITS OWN
+trait pools plus the generic fallbacks. 179 distinct against a 294-clip pack
+is therefore expected, not a fault. The remainder belongs to personalities
+that Visitor does not have.
+
+### Not verified, and why
+
+- **Farewell / new Visitor** — necessarily ends the current Visitor, so it was
+  not run. Partial coverage: four stored Visit Records show farewell note
+  assembly, tone and record-writing all working, and the runtime-assembled
+  farewell note is exactly the case the chirp fallback covers.
+- **Schema migration fixtures (`V { " #`)** — they overwrite the real save
+  with a fake blob and never restore it. Covered structurally instead: Phase
+  10 touches neither `storage.h`/`storage.cpp` nor `pet.h` (confirmed by
+  `git diff pre-phase10-baseline..HEAD`), and every boot re-confirms
+  `sizeof(save_t) 433 / schema 8 / load OK`.
+
+### A correction worth keeping
+
+During verification the upside-down reaction was reported as never firing, and
+the conclusion drawn was that the detector was aimed at the wrong gesture and
+needed changing. **That was wrong.** The recorder later showed a 5216 ms hold
+below the threshold firing it correctly; every earlier attempt had simply
+never held past vertical for more than 103 ms. The detector is correct and was
+NOT changed.
+
+What survives is a weaker TUNING observation, deliberately not acted on: the
+only orientation that earns a complaint is the one where the child is looking
+at the back of the device and cannot see the bubble, and it needs a deliberate
+1.2 s hold that casual play will not produce. That is a design question for
+whoever wants it, not a defect.
+
+Related: a reported "pulse down" turned out to be a deliberately odd tilt
+calibration (`down +0.764`) making flat read as a 0.77 g tilt, so the slide
+was legitimately active. Not a bug.
+
 ## 3. Save schema
 
 **Schema 8. `sizeof(save_t)` = 433 bytes. `SAVE_SIZE_BUDGET` = 448.**
@@ -477,6 +750,24 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
     DREAM_MIN_NIGHT_SEC 7200   DREAM_MIN_NAP_SEC 1200
     DREAM_NAP_CHANCE_PCT 35    DREAM_KEEP 3
 
+    --- PHASE 10 ---
+    AUDIO   ES8311 @0x18, 16000 Hz, MCLK 16 (256x) BCLK 9 WS 45 DOUT 8 DIN 10
+            PA GPIO 46 (plain GPIO, HIGH = on).  VOL_MUTE/LOW/MED/HIGH 0..3
+            MUTE = digital zero at the SOURCE, not codec attenuation
+    VOICE   2 packs x 294 clips, 16 kHz 4-bit IMA ADPCM, 4.01 + 4.07 MB
+            pitch x1.46  pace x1.15  noise 0.70   (baked in at render time)
+            stage ladder Baby 1.00 / Kid 0.980 / Teen 0.955 / Adult 0.930
+    SNORE_MIN_GAP_MS 45000   SNORE_MAX_GAP_MS 90000   SNORE_MAX_PER_NAP 2
+            night ALWAYS silent; Baby + daytime nap + clock agrees only
+    EGG_COUNTDOWN_SEC 5  (ticks on the second BOUNDARY, then the chime)
+
+    MOTION_DEADZONE_G 0.15   MOTION_ACCEL 2.20   MOTION_VMAX 7.0 px
+    MOTION_UPSIDE_Z -0.65    MOTION_UPSIDE_MS 1200
+    MOTION_UPSIDE_RELIEF_MS 2500   MOTION_COMPLAIN_GAP_MS 6000
+    MOTION_CAL_MS 1400  _SAMPLES 24  _MAX_SPREAD 0.18 g
+    MOTION_ANNOY_PER_FLIP 12.0   decay 2.0/s   (FLAVOUR ONLY)
+    SETTINGS  own NVS key visitors/cfg, v1, 20 B, versioned + CRC
+
     BUBBLE_DEFER_SLOTS 3   _TEXT_MAX 80   _HOLD_MS 120000
     BUBBLE_RECENT_TEXT_MAX 96   (the no-repeat list owns its strings)
 
@@ -553,6 +844,11 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
    smallest sample cannot cross 39.25. Measured with `tools/evosurvey`
    sleepprobe: 60 days of lights-on sleep asymptotes to exactly 45.0000.
 
+   **STILL OPEN as of Phase 10 acceptance (2026-08-31), and deliberately so.**
+   It was explicitly left untouched through the whole Phase 10 verification
+   pass: it is a BALANCE change, not a Phase 10 regression, and it belongs in
+   the v1 bug/balance sweep where it can be judged against everything else.
+
    **Grumpy is still reachable** — via `care_happy`, which does reach 3.75
    after 48 h of zero happiness, and the live test pet is a Grumpy Adult that
    got there exactly that way. So no form is unreachable and nothing is
@@ -592,18 +888,20 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
 
 ## 9. Exact next steps
 
-1. Nothing is outstanding for Phase 9.5. It is committed and tagged.
-2. DONE — evolution reachability verified, 12 of 12 forms (§8.1).
-3. DONE — snap-to-bed verified on hardware (§8.3).
-4. Awaiting a decision on the dead Grumpy sleep clause (§8.1b). Balance
-   change, deliberately not made unilaterally.
-5. Phase 10 only when asked. Nothing about it has been started.
+1. Nothing is outstanding for Phase 10. It is committed and tagged
+   `phase10-feature-baseline`, and pushed to `origin`.
+2. **NEXT: a full v1 release-candidate bug hunt, in a FRESH context.**
+   Deliberately not started in the Phase 10 session.
+3. Still awaiting a decision on the dead Grumpy sleep clause (§8.1b). It is a
+   BALANCE change, deliberately not made unilaterally, and it was explicitly
+   left untouched through Phase 10 verification. It belongs in the bug/balance
+   sweep, not in a feature phase.
+4. Do NOT tag v1.0.0 and do NOT merge to `main` without being asked.
 
-Also landed alongside the two checks: the `tools/evosurvey` harness, a
-one-line fix in `evolve_explain()` (its accumulator header printed the literal
-"24h half-life" for the whole of the 12 h era, in the one diagnostic used to
-reason about the accumulators - it now prints ACCUM_HALFLIFE_HOURS), and the
-hatch-countdown layout of §2d.
+Voice packs are NOT in git. A fresh clone needs `pio run -t uploadfs` with
+`data/voice_boy.bin` and `data/voice_girl.bin` rebuilt per
+`tools/voicepack/README.md`, or the Visitor falls back to chirps — which is a
+supported degraded mode, not a failure.
 
 ## 10. Build / flash / test
 
@@ -660,21 +958,23 @@ seconds. Use `~/.platformio/penv/bin/python` (it has pyserial).
 A common self-inflicted test failure is leaving it on and concluding a feature
 is broken.
 
-## 11. Phase 10 scope (DO NOT START YET)
+## 11. Phase 10 scope — DELIVERED
 
-- IMU personality interactions — reactions to shaking, tilting, being upside
-  down, using the frozen axis mapping via the display-frame adapter.
-- User-facing tilt calibration.
-- Audio subsystem and a four-way volume control (Mute / Low / Medium / High).
-  Mute silences sound ONLY; all bubbles and visual feedback continue.
-  Night-time sleep is quiet; a Baby may make one or two daytime nap snores;
-  never repetitive all-night snoring — this device sleeps in a child's bedroom.
-  Requirements are recorded in `docs/PHASE10-AUDIO-REQUIREMENTS.md`.
-  **Audio is hardware-blocked:** `BSP_AUDIO_VERIFIED` is 0. The ES8311 answers
-  at 0x18 but the I2S routing, MCLK and PA enable line are all unverified.
-  UI hooks for Volume, Recalibrate Tilt and Gravity Reactions are reserved
-  on the SETTINGS page (renamed from Pet Info in Phase 9.5) as visible,
-  disabled cards. Phase 10 wires them; 15 bytes of save headroom remain.
+Kept for the record; see §2e for what was actually built and verified.
+
+- IMU personality interactions (shake, tilt, upside down) via the frozen axis
+  mapping and the display-frame adapter — DONE.
+- User-facing tilt calibration — DONE, with a reject-while-moving guard.
+- Audio subsystem and a four-way volume control — DONE. Mute silences sound
+  ONLY; all bubbles and visual feedback continue.
+- Night-time sleep quiet, Baby daytime nap snores only, never repetitive
+  all-night snoring — DONE, and hardened during verification (§2e defect 1).
+- The three reserved Settings cards (Volume, Recalibrate Tilt, Gravity
+  Reactions) are live and show their current value in the label, so "is it
+  muted?" is answered by looking.
+- `BSP_AUDIO_VERIFIED` is now 1 and the pinout is ground truth (§2e).
+- Settings did NOT go into `save_t`; they have their own NVS key, so the
+  15 bytes of save headroom noted here previously are still free.
 
 ## 12. Working style the user expects
 

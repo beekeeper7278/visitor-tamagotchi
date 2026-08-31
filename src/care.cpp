@@ -493,7 +493,22 @@ void care_tick(void)
     {
         const pet_state_t *sp = pet_get();
         const uint32_t now_ms = millis();
-        if (sp->asleep && s_sleep_was_nap && sp->stage == STAGE_BABY &&
+        /* live_window/live_nap come from the CLOCK, and they are in the gate
+         * deliberately.
+         *
+         * s_sleep_was_nap is latched on sleep ENTRY, and entry is skipped when
+         * the Visitor is ALREADY asleep - so a nap that carries across into
+         * the evening leaves the flag still saying "nap" at 20:30, and a Baby
+         * would snore all night. Observed exactly that way: the gate read
+         * `was_nap 1` at night, and only an exhausted snore budget happened to
+         * keep it quiet.
+         *
+         * The latched flag is kept (the wake-up still needs to know which kind
+         * of sleep it was) but it can no longer authorise sound on its own:
+         * the clock has to say daytime-nap RIGHT NOW. Night is then silent by
+         * construction rather than by luck. */
+        if (sp->asleep && s_sleep_was_nap && live_window && live_nap &&
+            sp->stage == STAGE_BABY &&
             s_snore_left > 0 && audio_volume() != VOL_MUTE) {
             if (!s_snore_next) {
                 s_snore_next = now_ms + SNORE_MIN_GAP_MS +
@@ -501,6 +516,8 @@ void care_tick(void)
             } else if (now_ms >= s_snore_next) {
                 audio_play(SND_SNORE);
                 s_snore_left--;
+                Serial.printf("SLEEP AUDIO: snore (%u left this nap)\n",
+                              (unsigned)s_snore_left);
                 s_snore_next = now_ms + SNORE_MIN_GAP_MS +
                     (uint32_t)random(0, (long)(SNORE_MAX_GAP_MS - SNORE_MIN_GAP_MS));
             }
@@ -573,6 +590,17 @@ void care_tick(void)
                 s_snore_left  = SNORE_MAX_PER_NAP;   /* budget, per period */
                 s_snore_next  = 0;
                 s_sleep_was_nap = nap;   /* the wake-up needs to know which */
+                /* TRACEABLE, because "no snoring at 2 am" is the one audio
+                 * requirement whose failure happens in a child's bedroom while
+                 * nobody is reading a console. The budget is armed either way;
+                 * the nap flag and the Baby check are what actually gate it,
+                 * so print the decision rather than the budget. */
+                Serial.printf("SLEEP AUDIO: %s -> %s\n",
+                              nap ? "nap (daytime)" : "night",
+                              (nap && p->stage == STAGE_BABY)
+                                  ? "snores allowed, max 2, gap 45-90 s"
+                                  : nap ? "silent (not a Baby)"
+                                        : "SILENT by policy");
                 ui_pet_set_wander(false);
                 build_bed(p->stage);
                 if (already_late) {
@@ -1525,6 +1553,30 @@ void care_report(void)
     Serial.println("=== CARE STATE ============================================");
     Serial.printf("  hunger %.0f  clean %.0f  happy %.0f  weight %.1f g (norm %.2f)\n",
                   p->hunger, p->cleanliness, p->happiness, p->weight_g, pet_weight_norm());
+    /* SLEEP AUDIO gate, spelled out. "No snoring at 2 am" is the audio rule
+     * whose failure happens in a bedroom with nobody watching, and its inputs
+     * are four private statics - so the only way to check it live was to sit
+     * and listen. Printing the gate makes it answerable in one keystroke. */
+    {
+        const uint32_t now_ms = millis();
+        bool rep_nap = false;
+        const bool rep_window = care_sleep_due_nap(&rep_nap);
+        const bool gate = p->asleep && s_sleep_was_nap && rep_window && rep_nap &&
+                          p->stage == STAGE_BABY && s_snore_left > 0 &&
+                          audio_volume() != VOL_MUTE;
+        Serial.printf("  sleep audio: asleep %d  was_nap %d  clock_nap %d  baby %d  "
+                      "left %u  unmuted %d -> %s\n",
+                      (int)p->asleep, (int)s_sleep_was_nap,
+                      (int)(rep_window && rep_nap),
+                      (int)(p->stage == STAGE_BABY), (unsigned)s_snore_left,
+                      (int)(audio_volume() != VOL_MUTE),
+                      gate ? "SNORES ALLOWED" : "silent");
+        if (gate) {
+            Serial.printf("    next snore in %ld ms%s\n",
+                          (long)(s_snore_next - now_ms),
+                          s_snore_next ? "" : "  (gap not armed yet)");
+        }
+    }
     {
         const char *tier = (p->bathroom >= BATH_TIER_URGENT_PCT)  ? "URGENT wiggle"
                          : (p->bathroom >= BATH_TIER_OBVIOUS_PCT) ? "obvious + bubble"

@@ -28,6 +28,10 @@ typedef struct {
 static pack_t   s_pack[VOICE_PACKS];
 static uint32_t s_rate = 16000;
 static bool     s_any;
+static bool     s_force_miss;   /* diagnostic only - see voice.h */
+
+void voice_set_force_miss(bool on) { s_force_miss = on; }
+bool voice_force_miss(void)        { return s_force_miss; }
 
 bool voice_ready(void) { return s_any; }
 bool voice_pack_ready(uint8_t p) { return p < VOICE_PACKS && s_pack[p].ready; }
@@ -117,6 +121,7 @@ bool voice_begin(void)
 
 bool voice_lookup(uint8_t pack, const char *text, uint32_t *off, uint32_t *len)
 {
+    if (s_force_miss) return false;    /* diagnostic: pretend there is no clip */
     if (pack >= VOICE_PACKS || !s_pack[pack].ready || !text || !*text) return false;
     const pack_t *pk = &s_pack[pack];
     const uint32_t h = voice_hash(text);

@@ -99,6 +99,20 @@ void audio_say_as(const char *text, uint8_t stage);
  * pack this Visitor is not using without destroying it to hatch another. */
 void audio_say_from(const char *text, uint8_t pack);
 
+/* DIAGNOSTIC: force the REAL audio_say() path to speak from a chosen pack.
+ *
+ * audio_say_from() proves a pack can be READ; it does not prove that the
+ * production path SELECTS the right one, because it takes the pack as an
+ * argument and never calls the selector. This override sits inside the
+ * selector instead, so audio_say() - the function every bubble actually
+ * calls - can be made to switch packs at runtime.
+ *
+ * It does NOT touch the Visitor's gender, so a boy stays a boy: this is how
+ * the girl pack gets heard without destroying a Visitor to hatch another.
+ * Pass -1 to hand selection back to the pet. */
+void audio_set_pack_override(int pack);
+int  audio_pack_override(void);
+
 /* Bring-up only: a plain 1 kHz tone, the thing a human ear can confirm. */
 void audio_test_tone(uint16_t ms, uint16_t hz);
 

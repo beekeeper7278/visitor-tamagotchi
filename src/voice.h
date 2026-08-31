@@ -62,6 +62,17 @@ bool voice_lookup(uint8_t pack, const char *text, uint32_t *off, uint32_t *len);
 /* Read packed ADPCM bytes from a pack. Called from the audio task only. */
 int  voice_read(uint8_t pack, uint32_t off, uint8_t *dst, int n);
 
+/* DIAGNOSTIC: force every lookup to MISS, so audio_say() takes its documented
+ * chirp-fallback branch on lines that DO have a clip. The honest way to test
+ * the fallback is to make the clip unavailable, and the alternatives - erasing
+ * the pack or reformatting the filesystem - cost an 80 s reflash and risk the
+ * partition that also holds nothing else. This costs one bool.
+ *
+ * It is a TEST FIXTURE and nothing in gameplay may read it. Left on, the
+ * Visitor simply chirps everything, which is exactly the no-pack behaviour. */
+void voice_set_force_miss(bool on);
+bool voice_force_miss(void);
+
 bool voice_pack_ready(uint8_t pack);
 uint32_t voice_count(void);
 uint32_t voice_rate(void);

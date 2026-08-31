@@ -655,8 +655,20 @@ static float stage_pitch(void) { return stage_pitch_of(pet_get()->stage); }
  * voice.h - and a voice is presentation, exactly like the egg colour tinting
  * the Baby. If only one pack is flashed, both genders use it: one voice is a
  * better outcome than falling back to chirps. */
+static int s_pack_override = -1;   /* diagnostic only - see audio.h */
+
+void audio_set_pack_override(int pack)
+{
+    s_pack_override = (pack >= 0 && pack < VOICE_PACKS) ? pack : -1;
+}
+int audio_pack_override(void) { return s_pack_override; }
+
 static uint8_t voice_pack_for_pet(void)
 {
+    /* The override is checked FIRST and still respects readiness below, so a
+     * diagnostic can never select a pack that is not mounted. */
+    if (s_pack_override >= 0 && voice_pack_ready((uint8_t)s_pack_override))
+        return (uint8_t)s_pack_override;
     const uint8_t want = (pet_get()->gender == GENDER_GIRL) ? VOICE_GIRL : VOICE_BOY;
     if (voice_pack_ready(want)) return want;
     const uint8_t other = (want == VOICE_GIRL) ? VOICE_BOY : VOICE_GIRL;

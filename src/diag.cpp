@@ -1240,7 +1240,12 @@ static void diag_phase10_menu(void)
     Serial.println("          0 mute   1 low   2 medium   3 high");
     Serial.println("  voice : w stage ladder   k real lines   V pack report");
     Serial.println("          b BOY pack        G GIRL pack   x coverage sweep");
+    Serial.println("          y gender pack switch (live)   f chirp fallback");
+    Serial.println("          L speak any line you type");
+    Serial.println("  audio2: h hatch countdown+chime   q game audio sweep");
     Serial.println("  motion: m report   c calibrate   g toggle gravity   n settings");
+    Serial.println("          S arm motion history (then handle it, then TAB m)");
+    Serial.println("  clock : R restore to 16:00 (awake band, after N/G/A)");
     const uint32_t t0 = millis();
     while (!Serial.available() && millis() - t0 < 4000) delay(10);
     if (!Serial.available()) { Serial.println("  (timed out)"); return; }
@@ -1327,45 +1332,125 @@ static void diag_phase10_menu(void)
              * blind spots. The first pack scanned dialogue.cpp alone and
              * silently omitted every line in strings.cpp - including the most
              * common ones - and the only symptom was a bubble that beeped.
-             * This is the check that would have caught it in seconds. */
-            uint16_t total = 0, missing = 0;
+             *
+             * THREE THINGS THIS SWEEP GOT WRONG, and now does not:
+             *
+             *   1. It counted only FAILURES. `total` was incremented inside
+             *      the miss branch, so every successful lookup went uncounted
+             *      and a sweep over a thousand lines reported "21 checked".
+             *      A verification tool that understates its own coverage
+             *      invites exactly the false confidence it exists to prevent.
+             *   2. It sampled 9 of the 18 dialogue selectors. Dreams, the
+             *      hatch greeting, food_yum, mischief, wake, stink and
+             *      sleepy_poke were never asked about at all.
+             *   3. It only ever checked the BOY pack. The girl pack is built
+             *      by the same generator from the same list, so a divergence
+             *      is unlikely - but "unlikely" is precisely what shipped the
+             *      last hole, and both packs are mounted anyway.
+             *
+             * Lines are DEDUPLICATED by hash, so "distinct" means distinct
+             * text and repeated draws from a random pool cost nothing. */
+            static uint32_t seen[512];
+            uint16_t nseen = 0, distinct = 0, missing = 0;
+            uint32_t lookups = 0;
+
+            if (voice_force_miss()) {
+                Serial.println("  (force_miss was ON - clearing it, or every "
+                               "line would report missing)");
+                voice_set_force_miss(false);
+            }
+
+            auto check = [&](const char *line) {
+                if (!line || !*line) return;
+                const uint32_t h = voice_hash(line);
+                uint16_t lo = 0, hi = nseen;
+                while (lo < hi) {
+                    const uint16_t mid = (uint16_t)((lo + hi) / 2);
+                    if (seen[mid] < h) lo = (uint16_t)(mid + 1); else hi = mid;
+                }
+                if (lo < nseen && seen[lo] == h) return;      /* already done */
+                if (nseen < (uint16_t)(sizeof(seen) / sizeof(seen[0]))) {
+                    for (uint16_t k = nseen; k > lo; k--) seen[k] = seen[k - 1];
+                    seen[lo] = h; nseen++;
+                }
+                distinct++;
+                uint32_t o, l;
+                for (uint8_t pk = 0; pk < VOICE_PACKS; pk++) {
+                    if (!voice_pack_ready(pk)) continue;
+                    lookups++;
+                    if (!voice_lookup(pk, line, &o, &l)) {
+                        missing++;
+                        Serial.printf("  MISSING (%s): \"%s\"\n",
+                                      pk == VOICE_BOY ? "boy" : "girl", line);
+                    }
+                }
+            };
+
             Serial.println();
             Serial.println("=== VOICE COVERAGE ========================================");
+
+            /* strings.cpp - the bubble tiers, enumerable in full.
+             * strings_at() WRAPS (i % n) and never returns NULL, so it cannot
+             * terminate a loop - asking it to hung the device on the first run
+             * of this sweep. strings_count() is the bound. */
             for (uint8_t t = 0; t < BUBBLE_TIER_COUNT; t++) {
-                /* strings_at() WRAPS (i % n) and never returns NULL, so it
-                 * cannot terminate a loop - asking it to hung the device on
-                 * the first run of this sweep. strings_count() is the bound. */
                 const uint8_t n = strings_count((bubble_tier_t)t);
-                for (uint8_t i = 0; i < n; i++) {
-                    const char *line = strings_at((bubble_tier_t)t, i);
-                    if (!line || !*line) continue;
-                    total++;
-                    uint32_t o, l;
-                    if (!voice_lookup(VOICE_BOY, line, &o, &l)) {
-                        missing++;
-                        Serial.printf("  MISSING (strings t%u): \"%s\"\n", t, line);
-                    }
-                }
+                for (uint8_t i = 0; i < n; i++)
+                    check(strings_at((bubble_tier_t)t, i));
             }
-            /* Sample the dialogue pools by asking for many draws - they are
-             * random, so repetition is how the whole pool gets seen. */
-            for (uint16_t n = 0; n < 120; n++) {
-                const char *l[] = { dialogue_shaken(), dialogue_shaken_annoyed(),
-                                    dialogue_upside_down(), dialogue_upright_relief(),
-                                    dialogue_told_off(), dialogue_food_refuse(),
-                                    dialogue_game_done(), dialogue_lights_on(),
-                                    dialogue_lights_off() };
-                for (unsigned i = 0; i < sizeof(l)/sizeof(l[0]); i++) {
-                    if (!l[i] || !*l[i]) continue;
-                    uint32_t o, ln;
-                    if (!voice_lookup(VOICE_BOY, l[i], &o, &ln)) {
-                        missing++; total++;
-                        Serial.printf("  MISSING (dialogue): \"%s\"\n", l[i]);
-                    }
-                }
+            const uint16_t after_strings = distinct;
+
+            /* dialogue.cpp - the INDEXED selectors, enumerable exactly. */
+            const uint8_t nd = dialogue_dream_count();
+            for (uint8_t i = 0; i < nd; i++) {
+                check(dialogue_dream_bubble(i));
+                check(dialogue_dream_journal(i));
             }
-            Serial.printf("  checked %u lines, %u missing -> %s\n",
-                          total, missing, missing ? "FAIL" : "PASS");
+            /* From MIS_NONE + 1: discipline_misbehave() early-returns on
+             * MIS_NONE, so the default branch of dialogue_mischief() ("Hehe.")
+             * is a defensive fallback the Visitor can never actually reach.
+             * Enumerating it made the sweep report a missing clip for a line
+             * that is correctly absent from the pack - a FALSE alarm, and a
+             * false alarm in the tool that guards the pack is expensive. */
+            for (uint8_t m = MIS_NONE + 1; m < MIS_COUNT; m++)
+                check(dialogue_mischief(m));
+
+            /* dialogue.cpp - the RANDOM selectors. Repetition is the only way
+             * to see a whole pool, and the dedup makes the repeats free. */
+            for (uint16_t n = 0; n < 400; n++) {
+                check(dialogue_lights_off());     check(dialogue_lights_on());
+                check(dialogue_stink());          check(dialogue_told_off());
+                check(dialogue_hatch_greeting()); check(dialogue_food_partial());
+                check(dialogue_food_refuse());    check(dialogue_game_done());
+                check(dialogue_shaken());         check(dialogue_shaken_annoyed());
+                check(dialogue_upside_down());    check(dialogue_upright_relief());
+                check(dialogue_wake(false));      check(dialogue_wake(true));
+                check(dialogue_sleepy_poke(false));
+                check(dialogue_sleepy_poke(true));
+                for (uint8_t f = 0; f < 3; f++) check(dialogue_food_yum(f));
+                for (uint8_t m = MIS_NONE + 1; m < MIS_COUNT; m++)
+                    check(dialogue_mischief(m));
+            }
+
+            Serial.printf("  strings.cpp tiers   : %u distinct\n", after_strings);
+            Serial.printf("  dialogue.cpp pools  : %u distinct\n",
+                          (unsigned)(distinct - after_strings));
+            Serial.printf("  distinct lines      : %u\n", distinct);
+            Serial.printf("  pack lookups        : %lu across %d pack(s)\n",
+                          (unsigned long)lookups, (int)VOICE_PACKS);
+            Serial.printf("  missing             : %u -> %s\n",
+                          missing, missing ? "FAIL" : "PASS");
+            Serial.printf("  pack holds          : %lu clips\n",
+                          (unsigned long)voice_count());
+            /* SAY WHAT THIS DOES NOT COVER. The dialogue selectors are
+             * flavoured by trait AND form, and a trait pool wins about 70% of
+             * draws - so this Visitor can only ever reach ITS OWN trait pools
+             * plus the generic fallbacks. The remainder of the pack belongs to
+             * personalities this Visitor does not have. That gap is inherent
+             * to sweeping from a live Visitor and is why the number below is
+             * lower than the pack count, which is NOT a fault. */
+            Serial.println("  NOTE: trait-flavoured pools are only reachable for");
+            Serial.println("        THIS Visitor's traits/form, so distinct < pack.");
             Serial.println("-----------------------------------------------------------");
             break;
         }
@@ -1397,7 +1482,163 @@ static void diag_phase10_menu(void)
             }
             break;
         }
+        case 'y': {
+            /* RUNTIME GENDER PACK SWITCH, through the PRODUCTION path.
+             *
+             * TAB-b / TAB-G call audio_say_from(), which takes the pack as an
+             * argument and never runs the selector - so they prove a pack can
+             * be READ and prove nothing about what a bubble would choose.
+             * This drives audio_say(), the function every bubble calls, and
+             * moves the selection underneath it.
+             *
+             * The Visitor's gender is NOT touched. It is printed before and
+             * after so that is visible rather than merely claimed. */
+            static const char *L = "Again! Again!";
+            const pet_state_t *p = pet_get();
+            Serial.printf("  Visitor gender BEFORE : %s\n",
+                          p->gender == GENDER_GIRL ? "girl" : "boy");
+            for (int round = 0; round < 2; round++) {
+                for (uint8_t pk = 0; pk < VOICE_PACKS; pk++) {
+                    audio_set_pack_override((int)pk);
+                    Serial.printf("  round %d  override -> %-4s  audio_say(\"%s\")\n",
+                                  round + 1, pk == VOICE_BOY ? "BOY" : "GIRL", L);
+                    audio_say(L);
+                    delay(2400);
+                }
+            }
+            audio_set_pack_override(-1);
+            Serial.printf("  override cleared -> selector back on the pet (%s)\n",
+                          pet_get()->gender == GENDER_GIRL ? "girl" : "boy");
+            audio_say(L);
+            delay(2400);
+            Serial.printf("  Visitor gender AFTER  : %s  %s\n",
+                          pet_get()->gender == GENDER_GIRL ? "girl" : "boy",
+                          pet_get()->gender == p->gender ? "(UNCHANGED - pass)"
+                                                         : "(CHANGED - FAIL)");
+            break;
+        }
+        case 'f': {
+            /* CHIRP FALLBACK, without harming the pack.
+             *
+             * The fallback branch is the one that keeps a Visitor talking on a
+             * board with no pack flashed, and it is only honestly tested by
+             * making a clip UNAVAILABLE. Erasing the pack would cost an 80 s
+             * reflash; voice_set_force_miss() costs a bool and is exact - the
+             * same branch runs, for the same reason, on a line we can prove
+             * has a clip. Note it is audio_say() throughout: audio_say_as()
+             * and audio_say_from() report a miss and return without chirping,
+             * so neither would exercise this at all. */
+            static const char *L = "I'm really hungry!";
+            uint32_t off, len;
+            const bool had = voice_lookup(VOICE_BOY, L, &off, &len);
+            Serial.printf("  \"%s\" has a clip: %s\n", L, had ? "YES" : "NO");
+            Serial.println("  A: normal - should be RECORDED SPEECH");
+            audio_say(L); delay(2600);
+            voice_set_force_miss(true);
+            Serial.printf("  force_miss = %d   lookup now: %s\n",
+                          (int)voice_force_miss(),
+                          voice_lookup(VOICE_BOY, L, &off, &len) ? "hit" : "MISS");
+            Serial.println("  B: forced miss - should be the CHIRP VOICE");
+            audio_say(L); delay(2600);
+            voice_set_force_miss(false);
+            Serial.println("  C: restored - should be RECORDED SPEECH again");
+            audio_say(L); delay(2600);
+            Serial.printf("  force_miss cleared: lookup %s -> %s\n",
+                          voice_lookup(VOICE_BOY, L, &off, &len) ? "hit" : "MISS",
+                          voice_lookup(VOICE_BOY, L, &off, &len) ? "PASS" : "FAIL");
+            break;
+        }
+        case 'h': {
+            /* HATCH COUNTDOWN AUDIO, with no hatch.
+             *
+             * The real thing happens once per Visitor and cannot be replayed,
+             * and starting an egg to hear it would destroy the Visitor that is
+             * already here. Same two sounds, same order, same 1 s spacing as
+             * scr_main_egg_refresh(): EGG_COUNTDOWN_SEC ticks on the second
+             * boundary, then the chime as beat 0 of the hatch. */
+            Serial.printf("  countdown: %d ticks at 1 s, then the chime\n",
+                          EGG_COUNTDOWN_SEC);
+            for (int left = EGG_COUNTDOWN_SEC; left >= 1; left--) {
+                Serial.printf("    EGG: countdown %d\n", left);
+                audio_play(SND_HATCH_TICK);
+                delay(1000);
+            }
+            Serial.println("    EGG: hatch chime");
+            audio_play(SND_HATCH_CHIME);
+            delay(1200);
+            break;
+        }
+        case 'q': {
+            /* EVERY GAME'S AUDIO, without playing four games to completion.
+             * These are the exact snd_t values games.cpp asks for, grouped by
+             * the game that asks for them. The Memory pads are listed as their
+             * own group because they deliberately BYPASS games_sfx() - they
+             * must be four distinct pitches or the sequence is unhearable. */
+            struct { const char *name; const snd_t *snd; uint8_t n; } G[] = {
+                { "common   : start / reveal / correct / wrong",
+                  (const snd_t[]){ SND_GAME_SELECT, SND_GAME_REVEAL,
+                                   SND_GAME_CORRECT, SND_GAME_WRONG }, 4 },
+                { "Hi-Lo    : reveal, then win / lose",
+                  (const snd_t[]){ SND_GAME_REVEAL, SND_GAME_GOAL,
+                                   SND_GAME_WRONG }, 3 },
+                { "Reaction : hit / miss, then win / lose",
+                  (const snd_t[]){ SND_GAME_HIT, SND_GAME_MISS,
+                                   SND_GAME_GOAL, SND_GAME_WRONG }, 4 },
+                { "Memory   : four PADS (must be four distinct pitches)",
+                  (const snd_t[]){ SND_MEMO_1, SND_MEMO_2,
+                                   SND_MEMO_3, SND_MEMO_4 }, 4 },
+                { "Memory   : a wrong tap - its own note, THEN the verdict",
+                  (const snd_t[]){ SND_MEMO_3, SND_GAME_WRONG }, 2 },
+                { "Maze     : wall bump, then the exit",
+                  (const snd_t[]){ SND_GAME_BUMP, SND_GAME_GOAL }, 2 },
+            };
+            for (unsigned g = 0; g < sizeof(G)/sizeof(G[0]); g++) {
+                Serial.printf("  %s\n", G[g].name);
+                for (uint8_t i = 0; i < G[g].n; i++) {
+                    audio_play(G[g].snd[i]);
+                    delay(700);
+                }
+                delay(500);
+            }
+            break;
+        }
+        case 'R':
+            /* PUT THE CLOCK BACK. N/G/A move the RTC to test the sleep window,
+             * and leaving it parked at 20:30 would hand the device back with a
+             * sleeping Visitor. 16:00 is inside the awake band for every stage
+             * (night is 20-07, the Baby nap is 13-14), so this is the state a
+             * physical test session should start from. Same date as N/G/A, so
+             * the age only moves within the day. */
+            diag_clock_to(16, 0, "afternoon / awake - RESTORE");
+            break;
+        case 'L': {
+            /* SPEAK AN ARBITRARY LINE. During a listening session the ask is
+             * always "play that one again" for a SPECIFIC line, and the pack
+             * auditions are fixed eight-line sets - so hearing one line again
+             * meant sitting through seven others. Goes through audio_say(),
+             * the real path, so a line with no clip chirps here exactly as it
+             * would in play. */
+            Serial.println("  type a line then Enter:");
+            char buf[96]; size_t n = 0; uint32_t t0 = millis();
+            while (millis() - t0 < 5000 && n < sizeof(buf) - 1) {
+                if (Serial.available()) {
+                    const int ch = Serial.read();
+                    if (ch == '\n' || ch == '\r') break;
+                    buf[n++] = (char)ch;
+                    t0 = millis();
+                }
+            }
+            buf[n] = 0;
+            if (!n) { Serial.println("  (nothing typed)"); break; }
+            uint32_t o, l;
+            Serial.printf("  \"%s\"  clip: %s\n", buf,
+                          voice_lookup(VOICE_BOY, buf, &o, &l) ? "yes"
+                                                               : "NO - will chirp");
+            audio_say(buf);
+            break;
+        }
         case 'm': motion_report(); break;
+        case 'S': motion_stats_reset(); break;
         case 'n': settings_report(); break;
         case 'c': motion_calibrate_start(); break;
         case 'g': settings_set_gravity(!settings_gravity_on()); break;
