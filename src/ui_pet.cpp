@@ -22,6 +22,7 @@
 
 #include "board_pins.h"
 #include "config.h"
+#include "audio.h"
 #include "forms.h"
 #include "ui_pet.h"
 
@@ -876,6 +877,14 @@ void ui_pet_tick(void)
             s_pos_y = s_walk_from_y + (lv_coord_t)((s_walk_to_y - s_walk_from_y) * te);
             /* two-phase squash + bob, so it reads as steps not a slide */
             const float ph = t * 6.2831853f * 2.0f;
+            /* A footstep tick, rate-limited HERE rather than at the call
+             * site: this runs every animation frame, and a step sound per
+             * frame would be a buzz, not footsteps. */
+            static uint32_t s_step_ms;
+            if (now - s_step_ms >= STEP_SOUND_GAP_MS) {
+                s_step_ms = now;
+                audio_play(SND_STEP);
+            }
             s_off_y  = -(lv_coord_t)(ANIM_WALK_BOB_PX * fabsf(sinf(ph)));
             s_squash = (int)(5.0f * cosf(ph));
         }

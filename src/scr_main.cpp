@@ -15,6 +15,7 @@
 #include "rtc.h"
 #include "evolve.h"
 #include "journal.h"
+#include "audio.h"
 #include "persist.h"
 #include "visitrec.h"
 #include "ui_bubble.h"
@@ -209,6 +210,10 @@ static void egg_hatch(void)
     /* The reveal and the first words own the next couple of minutes. */
     discipline_settle(MISCHIEF_SETTLE_HATCH_MS);
 
+    /* Beat 0 of the sequence: the shell opens. The chime lands HERE, before
+     * the reveal banner and well before the first words, so the three beats
+     * stay strictly ordered and nothing overlaps. */
+    audio_play(SND_HATCH_CHIME);
     ui_pet_set_egg(false, 0);
     ui_pet_set_form(FORM_BABY);
     ui_pet_set_baby_palette(p->egg_color);   /* it came out of THAT egg */
@@ -308,6 +313,24 @@ void scr_main_egg_refresh(void)
     if (now >= p->egg_hatch_ts) { egg_hatch(); return; }
 
     const uint32_t left = p->egg_hatch_ts - now;
+
+    /* THE LAST FIVE SECONDS get a chirp each, so someone carrying the Visitor
+     * in a pocket has a reason to look at the screen before the one moment
+     * that cannot be replayed. Fired on the SECOND BOUNDARY, not every
+     * refresh - scr_main_egg_refresh() runs about once a second, but "about"
+     * would double- or skip-beep, and a countdown that stutters is worse than
+     * no countdown. */
+    static uint32_t s_last_tick_sec;
+    if (left <= EGG_COUNTDOWN_SEC && left >= 1) {
+        if (s_last_tick_sec != left) {
+            s_last_tick_sec = left;
+            audio_play(SND_HATCH_TICK);
+            Serial.printf("EGG: countdown %lu\n", (unsigned long)left);
+        }
+    } else if (left > EGG_COUNTDOWN_SEC) {
+        s_last_tick_sec = 0;
+    }
+
     ui_pet_set_egg_progress(1.0f - (float)left / (float)EGG_HATCH_SEC);
     char b[48];
     snprintf(b, sizeof(b), "Hatching in %lu:%02lu",

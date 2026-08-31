@@ -21,6 +21,7 @@
 #include "journal.h"
 #include "dialogue.h"
 #include "games.h"
+#include "audio.h"
 #include "diag.h"
 #include <math.h>
 
@@ -35,8 +36,32 @@ static bool      s_active;
 static uint16_t  s_score;
 static uint32_t  s_elapsed_ms;
 
-/* Phase 10 owns audio. These exist so the call sites are already correct. */
-void games_sfx(game_sfx_t s) { (void)s; }
+/* PHASE 10: the hooks Phase 7 left are now wired. Every game already called
+ * games_sfx() at the right moments, so this is the whole of "games audio" -
+ * which is exactly why the stub was left behind. */
+void games_sfx(game_sfx_t s)
+{
+    switch (s) {
+        case SFX_START: audio_play(SND_GAME_SELECT); break;
+        case SFX_TAP:   audio_play(SND_UI_TAP);      break;
+        case SFX_HIT:   audio_play(SND_GAME_HIT);    break;
+        case SFX_MISS:  audio_play(SND_GAME_MISS);   break;
+        case SFX_WIN:   audio_play(SND_GAME_GOAL);   break;
+        case SFX_LOSE:  audio_play(SND_GAME_WRONG);  break;
+        case SFX_TICK:  audio_play(SND_GAME_REVEAL); break;
+        default: break;
+    }
+}
+
+/* MEMORY needs a DISTINCT pitch per pad, and the player's own tap has to
+ * reproduce the same pitch - that is the whole game. A generic hit/miss blip
+ * would make the sequence unhearable, so the pads get their own arpeggio and
+ * bypass games_sfx(). */
+static void mem_pad_tone(uint8_t pad)
+{
+    static const snd_t T[4] = { SND_MEMO_1, SND_MEMO_2, SND_MEMO_3, SND_MEMO_4 };
+    audio_play(T[pad & 3]);
+}
 
 /* Stage 0..3 = Baby/Kid/Teen/Adult. An Egg plays with Baby settings - it
  * should not be locked out of games for lacking a birthday. */
@@ -806,7 +831,7 @@ static void mem_show_step(lv_timer_t *t)
         }
         const uint8_t pad = s_mem_seq[s_mem_step];
         lv_obj_set_style_bg_opa(s_mem_pad[pad], LV_OPA_COVER, 0);
-        games_sfx(SFX_TICK);
+        mem_pad_tone(pad);
         lv_timer_set_period(t, MEM_ON[st]);
         s_mem_step++;
     } else {
@@ -819,7 +844,11 @@ static void mem_tap(lv_event_t *e)
     if (s_mem_playing) return;
     const uint8_t pad = (uint8_t)(intptr_t)lv_event_get_user_data(e);
 
-    if (pad == s_mem_seq[s_mem_in]) { s_mem_right++; games_sfx(SFX_HIT); }
+    /* The tap always sounds its OWN pad first - the player is playing the
+     * instrument, and a wrong note should be audible as a wrong NOTE. The
+     * verdict blip follows only when it is wrong. */
+    mem_pad_tone(pad);
+    if (pad == s_mem_seq[s_mem_in]) { s_mem_right++; }
     else                             { games_sfx(SFX_MISS); }
     s_mem_in++;
 
@@ -1129,8 +1158,24 @@ static void mz_step(lv_timer_t *t)
         s_mz_x += s_mz_vx;
         s_mz_y += s_mz_vy;
     } else {
+        /* A wall is "hit" when the axis was carrying real speed and the slide
+         * refused to move: mz_slide() stops at the last free position, so a
+         * blocked axis ends where it began. Rate-limited, because a player
+         * hugging a wall is legitimately blocked on every single frame and
+         * must not be pinged for it - the brief asks for subtle collisions,
+         * not constant movement noise. */
+        const float bx = s_mz_x, by = s_mz_y;
+        const float sx = s_mz_vx, sy = s_mz_vy;
         s_mz_x = mz_slide(s_mz_x, s_mz_y, &s_mz_vx, true);
         s_mz_y = mz_slide(s_mz_y, s_mz_x, &s_mz_vy, false);
+        const bool hit = (fabsf(sx) > MZ_BUMP_V && s_mz_x == bx) ||
+                         (fabsf(sy) > MZ_BUMP_V && s_mz_y == by);
+        static uint32_t s_mz_bump_ms;
+        const uint32_t nowb = millis();
+        if (hit && nowb - s_mz_bump_ms >= MZ_BUMP_GAP_MS) {
+            s_mz_bump_ms = nowb;
+            audio_play(SND_GAME_BUMP);
+        }
     }
 
     lv_obj_set_pos(s_mz_ball, (lv_coord_t)s_mz_x, (lv_coord_t)s_mz_y);

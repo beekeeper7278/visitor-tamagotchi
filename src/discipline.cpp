@@ -7,6 +7,7 @@
 #include "menu.h"
 #include "ui_pet.h"
 #include "ui_bubble.h"
+#include "audio.h"
 #include "evolve.h"
 #include "persist.h"
 #include "dialogue.h"
@@ -100,6 +101,7 @@ void discipline_misbehave(mischief_t what)
     s_last_mis_ms = s_opened_ms;
     pet_mutable()->disc_opportunities++;
 
+    audio_play(SND_GRUMBLE);
     ui_pet_play(PET_ANIM_REACT);
     ui_bubble_say(BUBBLE_T2_MOOD, dialogue_mischief((uint8_t)what));
     Serial.printf("MISCHIEF: %s - discipline window open for %lus\n",
@@ -129,6 +131,7 @@ void discipline_press(void)
         draw_new_gap();
 
         ui_pet_play(PET_ANIM_SAD);
+        audio_play(SND_SCOLD);
         ui_bubble_say(BUBBLE_T1_REACTION, dialogue_told_off());
         Serial.printf("DISCIPLINE: fair -> +%.0f (now %.0f), mischief %u\n",
                       DISC_GAIN, p->discipline, p->mischief);

@@ -12,6 +12,7 @@
 #include "evolve.h"
 #include "ui_pet.h"
 #include "ui_bubble.h"
+#include "audio.h"
 #include "persist.h"
 #include "journal.h"
 
@@ -286,6 +287,7 @@ void evolve_present(uint8_t new_form, bool announce_only)
      * passes through, rather than at each of the four call sites. */
     pet_record_form();
 
+    audio_play(SND_EVOLVE);
     ui_pet_set_done_cb(evo_done_cb);
     ui_pet_evolve_to(new_form);
 

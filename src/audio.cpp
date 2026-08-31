@@ -39,8 +39,39 @@ enum { W_SINE = 0, W_SQUARE, W_NOISE, W_TRI };
 
 typedef struct { seg_t seg[4]; uint8_t n; } voice_t;
 
+/* --- the VOICE, as opposed to the beeps ---------------------------------
+ * First cut rendered speech as pitched tone bursts and it sounded, in the
+ * user's words, like R2D2 - which is exactly what tone bursts sound like.
+ * Pitch is not what makes a noise read as a voice; FORMANTS are. A vowel is
+ * two resonant peaks sitting on a buzzy source, and the ear identifies the
+ * peaks, not the fundamental.
+ *
+ * So the voice is now a proper little formant synth: a pulse train
+ * (the "vocal folds") through two 2-pole resonators (the "mouth"), with the
+ * vowel changing per syllable. Same cost bracket as before - two biquads and
+ * a phase counter - and it babbles rather than bleeps.
+ *
+ * Formants are scaled well ABOVE adult values. A small head has a short
+ * vocal tract and therefore high formants; that is the acoustic reason a
+ * child sounds like a child, and it is what keeps the Adult stage cute
+ * rather than a realistic grown human, which the brief forbids. */
+enum { VOW_A = 0, VOW_E, VOW_I, VOW_O, VOW_U, VOW_COUNT };
+
+static const uint16_t FORMANT[VOW_COUNT][2] = {
+    /* F1    F2   */
+    { 1120, 1820 },   /* "ah" - open, the default babble vowel  */
+    {  700, 2660 },   /* "eh" - bright                          */
+    {  420, 3360 },   /* "ee" - brightest, good for questions   */
+    {  700, 1260 },   /* "oh" - round                           */
+    {  490, 1120 },   /* "oo" - darkest, good for grumbling     */
+};
+
+typedef struct { uint16_t f0a, f0b; uint8_t vowel; uint16_t ms; } vseg_t;
+typedef struct { vseg_t seg[4]; uint8_t n; } speech_t;
+
 /* A request travelling to the mixer task. */
-typedef struct { voice_t v; } req_t;
+enum { REQ_BEEP = 0, REQ_SPEECH };
+typedef struct { uint8_t kind; voice_t v; speech_t sp; } req_t;
 
 /* --- helpers ------------------------------------------------------------- */
 static float vol_scale(void)
@@ -98,19 +129,102 @@ static void render(const voice_t *v)
     }
 }
 
+/* A 2-pole resonator. r sets the bandwidth, theta the centre frequency.
+ * y[n] = x[n] + 2 r cos(theta) y[n-1] - r^2 y[n-2] */
+typedef struct { float b1, b2, z1, z2; } reso_t;
+
+static void reso_set(reso_t *f, float hz, float bw)
+{
+    const float r = expf(-3.14159265f * bw / (float)AU_RATE);
+    const float th = 2.0f * 3.14159265f * hz / (float)AU_RATE;
+    f->b1 = 2.0f * r * cosf(th);
+    f->b2 = -r * r;
+}
+static inline float reso_run(reso_t *f, float x)
+{
+    const float y = x + f->b1 * f->z1 + f->b2 * f->z2;
+    f->z2 = f->z1; f->z1 = y;
+    return y;
+}
+
+static void render_speech(const speech_t *sp)
+{
+    static int16_t buf[AU_CHUNK * 2];
+    const float amp_master = vol_scale();
+    if (amp_master <= 0.0f) return;
+
+    float ph = 0.0f;                 /* glottal phase   */
+    reso_t f1 = {}, f2 = {};
+    uint8_t last_vowel = 0xFF;
+
+    for (uint8_t i = 0; i < sp->n; i++) {
+        const vseg_t *g = &sp->seg[i];
+        const int total = (int)((uint32_t)g->ms * AU_RATE / 1000);
+        if (total <= 0) continue;
+        const uint8_t vw = g->vowel % VOW_COUNT;
+        if (vw != last_vowel) {
+            /* ~110 Hz bandwidths: narrow enough to colour the tone strongly,
+             * wide enough not to ring like a bell between pulses. */
+            reso_set(&f1, (float)FORMANT[vw][0], 110.0f);
+            reso_set(&f2, (float)FORMANT[vw][1], 130.0f);
+            last_vowel = vw;
+        }
+        int done = 0;
+        while (done < total) {
+            const int n = (total - done > AU_CHUNK) ? AU_CHUNK : total - done;
+            for (int k = 0; k < n; k++) {
+                const float t = (float)(done + k) / (float)total;
+                /* Pitch contour across the syllable, plus a little vibrato -
+                 * a perfectly steady pitch is the other half of sounding
+                 * robotic. */
+                const float vib = 1.0f + 0.012f * sinf((float)(done + k) * 0.0045f);
+                const float f0 = (g->f0a + (g->f0b - g->f0a) * t) * vib;
+
+                /* Glottal source: a short pulse each period. Cheap, and much
+                 * more voice-like than a sine, which has nothing for the
+                 * formants to shape. */
+                ph += f0 / (float)AU_RATE;
+                float exc = 0.0f;
+                if (ph >= 1.0f) { ph -= 1.0f; exc = 1.0f; }
+                else if (ph < 0.08f) exc = 0.35f;      /* softens the click  */
+
+                float v = reso_run(&f1, exc) * 0.75f + reso_run(&f2, exc) * 0.45f;
+
+                /* Speech-shaped envelope: quick on, gentle off, and never a
+                 * hard edge - a clicky syllable reads as a beep again. */
+                float env;
+                if (t < 0.12f)      env = t / 0.12f;
+                else if (t > 0.72f) env = (1.0f - t) / 0.28f;
+                else                env = 1.0f;
+                env *= env;
+
+                v *= env * 0.16f * amp_master;
+                if (v >  1.0f) v =  1.0f;
+                if (v < -1.0f) v = -1.0f;
+                const int16_t s16 = (int16_t)(v * 20000.0f);
+                buf[k * 2] = s16; buf[k * 2 + 1] = s16;
+            }
+            s_i2s.write((uint8_t *)buf, (size_t)n * 4);
+            done += n;
+        }
+    }
+}
+
 static void mixer_task(void *arg)
 {
     (void)arg;
     req_t r;
     for (;;) {
-        if (xQueueReceive(s_q, &r, portMAX_DELAY) == pdTRUE) render(&r.v);
+        if (xQueueReceive(s_q, &r, portMAX_DELAY) != pdTRUE) continue;
+        if (r.kind == REQ_SPEECH) render_speech(&r.sp);
+        else                      render(&r.v);
     }
 }
 
 static void submit(const voice_t *v)
 {
     if (!s_ready || s_vol == VOL_MUTE || !s_q) return;
-    req_t r; r.v = *v;
+    req_t r; r.kind = REQ_BEEP; r.v = *v;
     /* Drop rather than block: audio must never stall the UI thread. */
     xQueueSend(s_q, &r, 0);
 }
@@ -233,39 +347,56 @@ void audio_voice(uint8_t syllables, bool question)
     if (!s_ready || s_vol == VOL_MUTE) return;
     const pet_state_t *p = pet_get();
 
-    float base; float wob; uint16_t syl_ms;
+    /* ONE character growing up. The pitch comes down and the delivery
+     * steadies as the stages pass, but the formants stay high throughout -
+     * that is what keeps the Adult unmistakably the same cute Visitor rather
+     * than a realistic grown human, which the brief rules out explicitly. */
+    float base; float spread; uint16_t syl_ms;
     switch (p->stage) {
-        case STAGE_KID:   base = 1180.0f; wob = 0.16f; syl_ms = 95;  break;
-        case STAGE_TEEN:  base =  980.0f; wob = 0.13f; syl_ms = 105; break;
-        case STAGE_ADULT: base =  840.0f; wob = 0.10f; syl_ms = 115; break;
-        default:          base = 1450.0f; wob = 0.22f; syl_ms = 80;  break;
+        case STAGE_KID:   base = 330.0f; spread = 0.20f; syl_ms = 150; break;
+        case STAGE_TEEN:  base = 285.0f; spread = 0.17f; syl_ms = 165; break;
+        case STAGE_ADULT: base = 250.0f; spread = 0.14f; syl_ms = 180; break;
+        default:          base = 400.0f; spread = 0.26f; syl_ms = 130; break;
     }
 
     /* Personality colours the DELIVERY, never the identity. */
     const uint8_t a = p->trait_a, b = p->trait_b;
-    uint8_t wave = W_SINE;
+    bool dark = false, bright = false;
     if (a == PERS_MISCHIEVOUS || b == PERS_MISCHIEVOUS ||
-        a == PERS_PLAYFUL     || b == PERS_PLAYFUL)     { wob += 0.08f; }
-    if (a == PERS_SHY || b == PERS_SHY)                 { base *= 1.04f; }
-    if (a == PERS_SLEEPY || b == PERS_SLEEPY)           { syl_ms += 25; }
-    /* A Grumpy or Scruffy ADULT gets a little burr on the tone - still cute,
-     * just not glassy. Forms carry meaning, so they are allowed to show. */
-    if (p->form_id == FORM_ADULT_GRUMPY ||
-        p->form_id == FORM_ADULT_SCRUFFY) { wave = W_TRI; base *= 0.94f; }
+        a == PERS_PLAYFUL     || b == PERS_PLAYFUL)   { spread += 0.10f; bright = true; }
+    if (a == PERS_SHY   || b == PERS_SHY)             { base *= 1.05f; syl_ms -= 15; }
+    if (a == PERS_SLEEPY|| b == PERS_SLEEPY)          { syl_ms += 40; spread *= 0.6f; }
+    if (a == PERS_DRAMATIC || b == PERS_DRAMATIC)     { spread += 0.08f; syl_ms += 20; }
+    /* Forms carry meaning, so they are allowed to show - a Grumpy Adult
+     * grumbles in the back of its mouth, a Scruffy one is goofier. */
+    if (p->form_id == FORM_ADULT_GRUMPY)  { base *= 0.88f; dark = true; }
+    if (p->form_id == FORM_ADULT_SCRUFFY) { spread += 0.12f; dark = true; }
 
     if (syllables < 1) syllables = 1;
     if (syllables > 4) syllables = 4;
 
-    voice_t v = {}; v.n = syllables;
+    speech_t sp = {}; sp.n = syllables;
     for (uint8_t i = 0; i < syllables; i++) {
+        /* Vary the vowel per syllable so it babbles instead of chanting one
+         * note. Dark and bright personalities lean on different vowels. */
+        uint8_t vw;
+        if (dark)        vw = (i & 1) ? VOW_U : VOW_O;
+        else if (bright) vw = (i & 1) ? VOW_E : VOW_A;
+        else             vw = (uint8_t)(random(0, VOW_COUNT));
+
         const float dir = (i & 1) ? -1.0f : 1.0f;
-        float f0 = base * (1.0f + dir * wob * 0.5f);
-        float f1 = base * (1.0f - dir * wob * 0.5f);
-        /* A question lifts at the end, the way a real one does. */
-        if (question && i == syllables - 1) { f0 = base; f1 = base * 1.35f; }
-        v.seg[i] = { (uint16_t)f0, (uint16_t)f1, syl_ms, wave, 140 };
+        float f0 = base * (1.0f + dir * spread * 0.35f);
+        float f1 = base * (1.0f - dir * spread * 0.35f);
+        /* A question lifts at the end, the way a real one does, and takes the
+         * brightest vowel with it. */
+        if (question && i == syllables - 1) {
+            f0 = base; f1 = base * 1.45f; vw = VOW_I;
+        }
+        sp.seg[i] = { (uint16_t)f0, (uint16_t)f1, vw, syl_ms };
     }
-    submit(&v);
+
+    req_t r; r.kind = REQ_SPEECH; r.sp = sp;
+    if (s_q) xQueueSend(s_q, &r, 0);
 }
 
 /* --- volume -------------------------------------------------------------- */

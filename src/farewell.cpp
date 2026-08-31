@@ -20,6 +20,7 @@
 #include "ui_pet.h"
 #include "ui_bubble.h"
 #include "scr_main.h"
+#include "audio.h"
 #include "menu.h"
 #include "games.h"
 #include "sim.h"
@@ -546,6 +547,8 @@ static void build_screen(void)
 
 void farewell_begin(void)
 {
+    /* The one cue that should land before anything is read. */
+    audio_play(SND_FAREWELL);
     if (s_active) return;
     s_active = true;
 

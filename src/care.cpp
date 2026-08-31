@@ -20,6 +20,7 @@
 #include "pet.h"
 #include "ui_pet.h"
 #include "ui_bubble.h"
+#include "audio.h"
 #include "strings.h"
 #include "care.h"
 #include "menu.h"
@@ -459,6 +460,8 @@ static lv_obj_t *s_bed;
 static uint32_t  s_last_bright_complaint;
 static uint32_t  s_sleep_due_since;   /* when we first noticed it should sleep */
 static bool      s_seen_awake_window; /* have we observed a NON-sleep tick yet? */
+static uint8_t   s_snore_left;         /* snores remaining THIS nap  */
+static uint32_t  s_snore_next;
 static bool      s_lights_on = true;   /* daytime default: lights on */
 
 void care_tick(void)
@@ -484,6 +487,26 @@ void care_tick(void)
      * callback never fires, and a stuck s_bath_active would freeze the
      * bathroom need forever. Trust the renderer's actual state over our own
      * latched flag. */
+    /* SLEEP AUDIO. Night is silent by policy - see config.h. Only a Baby,
+     * only a daytime nap, only a couple of times, and at a randomised gap so
+     * it stays a charming find rather than a rhythm. */
+    {
+        const pet_state_t *sp = pet_get();
+        const uint32_t now_ms = millis();
+        if (sp->asleep && s_sleep_was_nap && sp->stage == STAGE_BABY &&
+            s_snore_left > 0 && audio_volume() != VOL_MUTE) {
+            if (!s_snore_next) {
+                s_snore_next = now_ms + SNORE_MIN_GAP_MS +
+                    (uint32_t)random(0, (long)(SNORE_MAX_GAP_MS - SNORE_MIN_GAP_MS));
+            } else if (now_ms >= s_snore_next) {
+                audio_play(SND_SNORE);
+                s_snore_left--;
+                s_snore_next = now_ms + SNORE_MIN_GAP_MS +
+                    (uint32_t)random(0, (long)(SNORE_MAX_GAP_MS - SNORE_MIN_GAP_MS));
+            }
+        }
+    }
+
     if (s_bath_active && ui_pet_current() != PET_ANIM_BATHROOM) {
         s_bath_active = false;
         Serial.println("BATHROOM sequence was interrupted - state recovered");
@@ -546,6 +569,9 @@ void care_tick(void)
                     (now - s_sleep_due_since >= SLEEP_CATCHUP_MS);
 
                 p->asleep = true;
+                audio_play(SND_BEDTIME);
+                s_snore_left  = SNORE_MAX_PER_NAP;   /* budget, per period */
+                s_snore_next  = 0;
                 s_sleep_was_nap = nap;   /* the wake-up needs to know which */
                 ui_pet_set_wander(false);
                 build_bed(p->stage);
@@ -563,6 +589,7 @@ void care_tick(void)
                 persist_mark_dirty("bedtime");
             } else if (!should_sleep && p->asleep) {
                 const bool was_nap = s_sleep_was_nap;
+                audio_play(SND_WAKE);
                 p->asleep = false;
                 /* Morning restores daytime automatically - lights back ON
                  * and full brightness, whatever the player left them at. */
@@ -708,6 +735,7 @@ static void apply_feed(food_t f, feed_result_t r)
             p->weight_g += (f == FOOD_BURGER ? BURGER_WEIGHT_G : FRUIT_WEIGHT_G);
         }
         p->meals++;
+        audio_play(SND_EAT);
         ui_pet_play(PET_ANIM_EATING);
         ui_bubble_say(BUBBLE_T1_REACTION, dialogue_food_yum((uint8_t)f));
         break;
@@ -717,6 +745,7 @@ static void apply_feed(food_t f, feed_result_t r)
         p->weight_g += BURGER_WEIGHT_G * FOOD_PARTIAL_FRACTION;
         p->meals++;
         /* the leftover is placed by the sequence, at the food's location */
+        audio_play(SND_EAT);
         ui_pet_play(PET_ANIM_EATING);
         ui_bubble_say(BUBBLE_T1_REACTION, dialogue_food_partial());
         break;
@@ -726,6 +755,7 @@ static void apply_feed(food_t f, feed_result_t r)
         /* Refusing food because it is genuinely FULL is not misbehaviour and
          * must never open a discipline window - that is the whole point of
          * the fair/unfair distinction. No call here on purpose. */
+        audio_play(SND_REFUSE_FOOD);
         ui_pet_play(PET_ANIM_REFUSE);
         ui_bubble_say(BUBBLE_T1_REACTION, dialogue_food_refuse());
         break;
@@ -899,6 +929,7 @@ void care_bathroom(void)
     s_was_urgent = false;
     p->bathroom = 0.0f;
     care_new_bath_target();
+    audio_play(SND_BATHROOM_GO);
     ui_pet_play(PET_ANIM_BATHROOM);
     Serial.println("BATHROOM -> running off screen, back in ~2 s");
 }
@@ -984,6 +1015,7 @@ void care_clean(void)
     s_cl_t0 = millis();
     s_cl_active = true;
 
+    audio_play(SND_CLEAN_PUFF);
     ui_pet_play(PET_ANIM_CLEANING);   /* scoots, then hops happily itself */
     Serial.printf("CLEAN removing %u mess(es), cleanliness -> %.0f\n", n, p->cleanliness);
     persist_mark_dirty("cleaned");

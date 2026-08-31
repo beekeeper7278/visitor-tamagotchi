@@ -832,6 +832,28 @@
 #define EGG_HATCH_LBL_H         24
 #define EGG_DROP_MS             700     /* the glide down; timing only      */
 
+/* The audible countdown before the hatch. Five seconds is long enough to get
+ * a child's attention and short enough that it does not become a nag. */
+#define EGG_COUNTDOWN_SEC       5
+
+/* Footsteps are a quiet tick, and deliberately SLOWER than the animation's
+ * own two-step cycle - the point is a suggestion of walking, not a
+ * synchronised foley track. */
+#define STEP_SOUND_GAP_MS       260UL
+
+/* SLEEP AUDIO. Night is SILENT: this device sits in a child's bedroom and a
+ * charming snore at 2 pm is a serious problem at 2 am. Only a BABY, only a
+ * DAYTIME NAP, and even then only occasionally - one or two across a nap,
+ * never a loop. */
+#define SNORE_MIN_GAP_MS        45000UL
+#define SNORE_MAX_GAP_MS        90000UL
+#define SNORE_MAX_PER_NAP       2
+
+/* Tilt Maze wall bump: subtle, and rate-limited because a player hugging a
+ * wall is blocked every frame by design. */
+#define MZ_BUMP_V               1.2f
+#define MZ_BUMP_GAP_MS          280UL
+
 #define EGG_HATCH_SHELL_TOP     (EGG_HATCH_ROOT_Y + EGG_SHELL_TOP_IN_BOX)
 #define EGG_HATCH_LBL_GAP       (EGG_HATCH_SHELL_TOP - (EGG_HATCH_LBL_Y + EGG_HATCH_LBL_H))
 #define EGG_HATCH_TOP_CLEAR     (EGG_HATCH_LBL_Y)

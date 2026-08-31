@@ -10,6 +10,7 @@
 #include "config.h"
 #include "ui_pet.h"
 #include "ui_bubble.h"
+#include "audio.h"
 
 static lv_obj_t *o_box, *o_label;
 
@@ -290,6 +291,21 @@ bool ui_bubble_say(bubble_tier_t tier, const char *text)
     s_last_tier[tier] = now; s_had_tier[tier] = true;
     remember(text);
     s_n_accept++;
+
+    /* THE VISITOR SPEAKS. Hooked here, at the one point a bubble is actually
+     * ACCEPTED, so the voice can never play for a line that was suppressed,
+     * cooled down or preempted away - the sound and the words are the same
+     * event or they are nothing.
+     *
+     * Syllables are estimated from the length rather than counted: the point
+     * is that a long line sounds longer than a short one, and four chirps is
+     * the cap regardless, so precision would buy nothing. A line ending in
+     * '?' lifts at the end. */
+    {
+        size_t n = strlen(text);
+        uint8_t syl = (n <= 8) ? 1 : (n <= 18) ? 2 : (n <= 30) ? 3 : 4;
+        audio_voice(syl, text[n - 1] == '?');
+    }
 
     Serial.printf("BUBBLE ACCEPT   %-11s \"%s\"  (%lu ms%s)\n",
                   ui_bubble_tier_name(tier), text, (unsigned long)dur,
