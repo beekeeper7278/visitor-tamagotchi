@@ -318,7 +318,10 @@ void evolve_explain(void)
     Serial.printf("  personality: %s + %s   mischief %u\n",
                   evolve_trait_name(p->trait_a), evolve_trait_name(p->trait_b),
                   p->mischief);
-    Serial.println("  accumulators (EMA, 24h half-life):");
+    /* Print the half-life rather than a literal: this line said "24h" for
+     * the whole of the 12 h era, in the one diagnostic used to reason about
+     * the accumulators. */
+    Serial.printf("  accumulators (EMA, %.0fh half-life):\n", (double)ACCUM_HALFLIFE_HOURS);
     Serial.printf("    happy %.1f  fed %.1f  clean %.1f  sleep %.1f  disc %.1f  junk %.1f\n",
                   p->care_happy, p->care_fed, p->care_clean, p->care_sleep,
                   p->care_discipline, p->nutrition);
