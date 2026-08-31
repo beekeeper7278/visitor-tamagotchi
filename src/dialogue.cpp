@@ -646,6 +646,80 @@ static int app(char *out, size_t len, int n, const char *fmt, ...)
     return n;
 }
 
+/* --- motion [PHASE 10] ---------------------------------------------------
+ * The brief's own examples are in here verbatim, because they set the tone
+ * exactly: startled and comic, never hurt. Grumpy grumbles, it does not
+ * snarl; Shy squeaks rather than shouts. */
+static const char *SHAKE_GEN[] = {
+    "Wheee! Do it again!", "Whoa!", "I'm getting dizzy!", "Everything's spinny!",
+};
+static const char *SHAKE_PLAYFUL[] = {
+    "WHEEE! Again! Again!", "Is this a ride?", "Fastest Visitor alive!",
+};
+static const char *SHAKE_SHY[] = {
+    "Eep!", "Oh! Um. Hello.", "That was a lot.",
+};
+static const char *SHAKE_DRAMATIC[] = {
+    "I HAVE BEEN LAUNCHED!", "AN EARTHQUAKE! IN HERE!", "MY WHOLE LIFE FLASHED BY!",
+};
+static const char *SHAKE_ANNOY_GEN[] = {
+    "HEY! Stop shaking me!", "Can you PLEASE hold still?", "I'm getting dizzy!",
+    "Okay okay OKAY, enough!",
+};
+static const char *SHAKE_ANNOY_GRUMPY[] = {
+    "Hmph. Put me down.", "This is my grumpy face.", "I was COMFY.",
+};
+static const char *SHAKE_ANNOY_SHY[] = {
+    "Please stop... please?", "I don't like this one.",
+};
+static const char *UPSIDE_GEN[] = {
+    "WHY AM I UPSIDE DOWN?!", "Can you flip me back?", "Hey! Put me back!",
+    "All the blood is in my head!",
+};
+static const char *UPSIDE_DRAMATIC[] = {
+    "THE WORLD HAS TURNED OVER!", "I LIVE ON THE CEILING NOW!",
+};
+static const char *UPSIDE_MISCHIEF[] = {
+    "Ha! I meant to do this.", "I'm fine. This is fine. Flip me back though.",
+};
+static const char *UPRIGHT_GEN[] = {
+    "Ahh, that's better!", "Thank you!", "Phew!", "Right way up! Hooray!",
+};
+
+const char *dialogue_shaken(void)
+{
+    if (flavour_wins()) {
+        if (trait(PERS_PLAYFUL))  return pick(SHAKE_PLAYFUL, NELEM(SHAKE_PLAYFUL));
+        if (trait(PERS_SHY))      return pick(SHAKE_SHY, NELEM(SHAKE_SHY));
+        if (trait(PERS_DRAMATIC)) return pick(SHAKE_DRAMATIC, NELEM(SHAKE_DRAMATIC));
+    }
+    return pick(SHAKE_GEN, NELEM(SHAKE_GEN));
+}
+
+const char *dialogue_shaken_annoyed(void)
+{
+    if (flavour_wins()) {
+        if (form_is(FORM_ADULT_GRUMPY) || trait(PERS_TIDY))
+            return pick(SHAKE_ANNOY_GRUMPY, NELEM(SHAKE_ANNOY_GRUMPY));
+        if (trait(PERS_SHY)) return pick(SHAKE_ANNOY_SHY, NELEM(SHAKE_ANNOY_SHY));
+    }
+    return pick(SHAKE_ANNOY_GEN, NELEM(SHAKE_ANNOY_GEN));
+}
+
+const char *dialogue_upside_down(void)
+{
+    if (flavour_wins()) {
+        if (trait(PERS_DRAMATIC))    return pick(UPSIDE_DRAMATIC, NELEM(UPSIDE_DRAMATIC));
+        if (trait(PERS_MISCHIEVOUS)) return pick(UPSIDE_MISCHIEF, NELEM(UPSIDE_MISCHIEF));
+    }
+    return pick(UPSIDE_GEN, NELEM(UPSIDE_GEN));
+}
+
+const char *dialogue_upright_relief(void)
+{
+    return pick(UPRIGHT_GEN, NELEM(UPRIGHT_GEN));
+}
+
 void dialogue_about_me(char *out, size_t len)
 {
     const pet_state_t *p = pet_get();

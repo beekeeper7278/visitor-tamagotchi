@@ -20,6 +20,8 @@
 #include "games.h"
 #include "gamerec.h"
 #include "audio.h"
+#include "settings.h"
+#include "motion.h"
 #include "evolve.h"
 #include "discipline.h"
 #include "journal.h"
@@ -1218,14 +1220,24 @@ void diag_identity_report(void)
     Serial.println("-----------------------------------------------------------");
 }
 
-/* TAB sub-commands. Reads ONE more character, with a short wait so a human
+/* Apply AND store, so the console and the Settings card can never disagree
+ * about what the volume is. */
+static void set_volume_persist(uint8_t v)
+{
+    settings_set_volume(v);
+    audio_set_volume(v);
+    audio_play(SND_HAPPY);
+}
+
+/* TAB sub-commands (Phase 10). Reads ONE more character, with a short wait so a human
  * typing TAB-then-key is not treated as two separate commands. */
-static void diag_audio_menu(void)
+static void diag_phase10_menu(void)
 {
     Serial.println();
-    Serial.println("AUDIO (TAB then):  t tone   r report   s level sweep");
-    Serial.println("                   0 mute  1 low  2 medium  3 high");
-    Serial.println("                   v voice sample   p play a few effects");
+    Serial.println("PHASE 10 (TAB then):");
+    Serial.println("  audio : t tone   r report   s level sweep   v voice   p effects");
+    Serial.println("          0 mute   1 low   2 medium   3 high");
+    Serial.println("  motion: m report   c calibrate   g toggle gravity   n settings");
     const uint32_t t0 = millis();
     while (!Serial.available() && millis() - t0 < 4000) delay(10);
     if (!Serial.available()) { Serial.println("  (timed out)"); return; }
@@ -1233,10 +1245,14 @@ static void diag_audio_menu(void)
     switch (k) {
         case 't': audio_test_tone(600, 1000); break;
         case 'r': audio_report(); break;
-        case '0': audio_set_volume(VOL_MUTE); audio_play(SND_HAPPY); break;
-        case '1': audio_set_volume(VOL_LOW);  audio_play(SND_HAPPY); break;
-        case '2': audio_set_volume(VOL_MED);  audio_play(SND_HAPPY); break;
-        case '3': audio_set_volume(VOL_HIGH); audio_play(SND_HAPPY); break;
+        /* PERSIST as well as apply. The console setting the live volume but
+         * not the stored one made a persistence test read as a failure when
+         * the only thing broken was the fixture - exactly the kind of
+         * self-inflicted result HANDOFF 12 warns about. */
+        case '0': set_volume_persist(VOL_MUTE); break;
+        case '1': set_volume_persist(VOL_LOW);  break;
+        case '2': set_volume_persist(VOL_MED);  break;
+        case '3': set_volume_persist(VOL_HIGH); break;
         case 's': {
             /* Sweep the levels so MUTE can be HEARD to be silent rather than
              * merely reported as silent. */
@@ -1247,7 +1263,7 @@ static void diag_audio_menu(void)
                 audio_play(SND_HAPPY);
                 delay(900);
             }
-            audio_set_volume(VOL_MED);
+            set_volume_persist(VOL_MED);
             break;
         }
         case 'v':
@@ -1266,7 +1282,11 @@ static void diag_audio_menu(void)
             }
             break;
         }
-        default: Serial.printf("  ? unknown audio key '%c'\n", (char)k); break;
+        case 'm': motion_report(); break;
+        case 'n': settings_report(); break;
+        case 'c': motion_calibrate_start(); break;
+        case 'g': settings_set_gravity(!settings_gravity_on()); break;
+        default: Serial.printf("  ? unknown Phase 10 key '%c'\n", (char)k); break;
     }
 }
 
@@ -1378,7 +1398,7 @@ void diag_serial_tick(void)
              * outside the printable range and was free, so audio commands are
              * "TAB then a letter" rather than stealing a key something else
              * already answers to. */
-            case '\t': diag_audio_menu();        break;
+            case '\t': diag_phase10_menu();        break;
             case 'b': diag_brightness_sweep();  break;
             case 'd': diag_i2c_report();        break;
             case 's': diag_storage_report();    break;

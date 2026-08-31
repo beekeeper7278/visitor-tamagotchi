@@ -13,6 +13,9 @@
 #include "rtc.h"
 #include "persist.h"
 #include "setclock.h"
+#include "motion.h"
+#include "audio.h"
+#include "settings.h"
 #include "games.h"
 #include "discipline.h"
 #include "evolve.h"
@@ -284,6 +287,55 @@ static void setclock_cb(lv_event_t *e)
     setclock_open();
 }
 
+static const char *volume_name(uint8_t v)
+{
+    switch (v) {
+        case VOL_MUTE: return "Mute";
+        case VOL_LOW:  return "Low";
+        case VOL_MED:  return "Medium";
+        default:       return "High";
+    }
+}
+
+/* Tap cycles Mute -> Low -> Medium -> High -> Mute. The confirmation chirp
+ * plays AFTER the new level is applied, so you hear what you just chose -
+ * and at Mute you correctly hear nothing, which is the point. */
+static void volume_cb(lv_event_t *e)
+{
+    (void)e;
+    if (menu_swipe_active()) return;
+    const uint8_t next = (uint8_t)((settings_volume() + 1) % VOL_COUNT);
+    settings_set_volume(next);
+    audio_set_volume(next);
+    audio_play(SND_UI_CONFIRM);
+    menu_rebuild_page();          /* so the label reflects the new state */
+}
+
+static void gravity_cb(lv_event_t *e)
+{
+    (void)e;
+    if (menu_swipe_active()) return;
+    const bool on = !settings_gravity_on();
+    settings_set_gravity(on);
+    /* Turning it back ON starts from calm: the saved calibration is kept,
+     * but temporary motion annoyance is not something to inherit from
+     * before the switch was flipped. */
+    audio_play(on ? SND_UI_CONFIRM : SND_UI_REFUSE);
+    menu_rebuild_page();          /* so the label reflects the new state */
+}
+
+static void calibrate_cb(lv_event_t *e)
+{
+    (void)e;
+    if (menu_swipe_active()) return;
+    if (motion_calibrating()) return;
+    /* Calibration works whether or not gravity reactions are on - it is a
+     * device setting, and Tilt Maze wants it either way. */
+    ui_bubble_say(BUBBLE_T1_REACTION, "Hold Visitor how you normally use it.");
+    motion_calibrate_start();
+    menu_rebuild_page();          /* so the label reflects the new state */
+}
+
 static void build_settings(lv_obj_t *p)
 {
     const pet_state_t *s = pet_get();
@@ -328,11 +380,24 @@ static void build_settings(lv_obj_t *p)
         lv_obj_align(i, LV_ALIGN_TOP_MID, 0, 190);
     }
 
-    /* --- reserved for Phase 10. Visible, disabled, and labelled so nobody
-     * has to guess whether they are broken or unfinished. --------------- */
-    card(p, "Volume",            36, 288, BSP_LCD_W - 72, 46, 0x9AA6C4, false);
-    card(p, "Recalibrate Tilt",  36, 340, BSP_LCD_W - 72, 46, 0x9AA6C4, false);
-    card(p, "Gravity Reactions", 36, 392, BSP_LCD_W - 72, 46, 0x9AA6C4, false);
+    /* --- PHASE 10: the three reserved cards, now live -------------------
+     * Each shows its CURRENT value in the label rather than opening a
+     * sub-screen. A parent checking "is it muted?" gets the answer by
+     * looking, and a tap cycles - which is the whole interaction a
+     * four-option setting needs on a 368 px panel. */
+    char vb[32];
+    snprintf(vb, sizeof(vb), "Volume:  %s", volume_name(settings_volume()));
+    lv_obj_t *vc = card(p, vb, 36, 288, BSP_LCD_W - 72, 46, 0x9AA6C4, true);
+    lv_obj_add_event_cb(vc, volume_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *cc = card(p, motion_calibrating() ? "Hold still..." : "Recalibrate Tilt",
+                        36, 340, BSP_LCD_W - 72, 46, 0x9AA6C4, true);
+    lv_obj_add_event_cb(cc, calibrate_cb, LV_EVENT_CLICKED, NULL);
+
+    char gb[32];
+    snprintf(gb, sizeof(gb), "Gravity:  %s", settings_gravity_on() ? "ON" : "OFF");
+    lv_obj_t *gc = card(p, gb, 36, 392, BSP_LCD_W - 72, 46, 0x9AA6C4, true);
+    lv_obj_add_event_cb(gc, gravity_cb, LV_EVENT_CLICKED, NULL);
 }
 
 /* --- 6. Journal ---------------------------------------------------------- */

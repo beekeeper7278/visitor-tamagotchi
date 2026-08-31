@@ -85,6 +85,15 @@ const char *dialogue_sleepy_poke(bool insistent);
 /* After a game. */
 const char *dialogue_game_done(void);
 
+/* --- motion [PHASE 10] ---------------------------------------------------
+ * Being shaken, tipped over and held upside down. Flavoured by trait and
+ * form like every other pool, and always cute - a Visitor that is being
+ * manhandled is funny, never distressed. */
+const char *dialogue_shaken(void);          /* one or two shakes            */
+const char *dialogue_shaken_annoyed(void);  /* it has been going on         */
+const char *dialogue_upside_down(void);
+const char *dialogue_upright_relief(void);
+
 /* --- the Journal --------------------------------------------------------- */
 
 /* "About Me", written as though the Visitor wrote it. Short, specific,

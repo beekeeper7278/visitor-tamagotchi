@@ -14,6 +14,8 @@
 #include "config.h"
 #include "bsp.h"
 #include "audio.h"
+#include "settings.h"
+#include "motion.h"
 #include "storage.h"
 #include "diag.h"
 #include "ui_diag.h"
@@ -76,6 +78,10 @@ static void anim_timer_cb(lv_timer_t *t)
     ui_pet_tick();
     ui_bubble_tick();
     care_anim_tick();
+    /* Motion rides the animation timer rather than its own: it moves the
+     * Visitor, so it belongs on the same cadence as everything else that
+     * does, and it self-throttles to MOTION_TICK_MS. */
+    motion_tick();
     scr_main_sleep_fx();
 }
 
@@ -104,9 +110,14 @@ void setup()
     diag_banner();
 
     bsp_init();
+    /* Settings first: audio needs the stored volume, and motion needs the
+     * stored calibration, before either of them starts. */
+    settings_begin();
     /* Audio is optional by design: a board where the codec does not come
      * up still runs the whole game, just silently. */
     audio_init();
+    audio_set_volume(settings_volume());
+    motion_begin();
     storage_init();
 
     diag_i2c_report();          /* 1 */

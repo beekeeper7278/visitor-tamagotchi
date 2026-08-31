@@ -713,6 +713,55 @@
 #define LEARN_ALPHA             0.22f   /* per resolved window              */
 #define LEARN_WEIGHT_PCT        60      /* how much it moves the roll, %    */
 
+/* --- MOTION / IMU personality [PHASE 10] --------------------------------
+ * All of these sit ABOVE the frozen BSP transform and above the display-frame
+ * adapter Tilt Maze established (right = +gy, down = -gx). Nothing here may
+ * be "fixed" by editing signs in board_pins.h.
+ *
+ * The dead zone is the single most important number: a hand at rest is never
+ * still, and without it the Visitor vibrates permanently. 0.15 g is roughly a
+ * 9-degree lean, which is comfortably more than tremor and comfortably less
+ * than a deliberate tip. */
+#define MOTION_TICK_MS            33      /* ~30 Hz; the panel runs at 60    */
+#define MOTION_DEADZONE_G         0.15f
+#define MOTION_ACCEL              2.20f   /* px per tick per g beyond dead   */
+#define MOTION_DAMP               0.88f
+#define MOTION_DAMP_NEUTRAL       0.80f   /* bleed-off near level            */
+#define MOTION_VMAX               7.0f    /* px per tick                     */
+#define MOTION_BUMP_V             2.0f    /* speed that counts as a bump     */
+#define MOTION_BUMP_GAP_MS        400UL
+
+/* Upside down. Screen +Z points INTO the panel, so a strongly NEGATIVE z is
+ * the screen facing the floor. Debounced: turning the device over on the way
+ * into a pocket is not "being held upside down". */
+#define MOTION_UPSIDE_Z           (-0.65f)
+#define MOTION_UPSIDE_MS          1200UL
+#define MOTION_UPSIDE_RELIEF_MS   2500UL  /* below this, no relief reaction  */
+
+/* Shake. Deliberate shaking is a JERK - a fast CHANGE in magnitude - not a
+ * large reading. Carrying tilts a lot and jerks little, which is exactly what
+ * keeps a walk to school from registering as an assault. */
+#define MOTION_SHAKE_JERK_G       0.55f
+#define MOTION_SHAKE_MIN          3       /* jerks inside the window         */
+#define MOTION_SHAKE_WINDOW_MS    900UL
+#define MOTION_SHAKE_GAP_MS       2500UL  /* between shake REACTIONS         */
+
+/* Annoyance: rises with handling, decays with time, and is FLAVOUR ONLY. It
+ * reaches no accumulator, no form choice, no evolution and no visit quality -
+ * a device carried in a backpack all day must not produce a damaged Visitor.
+ * Full decay from 100 takes ~50 s of being left alone. */
+#define MOTION_ANNOY_PER_SHAKE    18.0f
+#define MOTION_ANNOY_PER_FLIP     12.0f
+#define MOTION_ANNOY_PER_BUMP      3.0f
+#define MOTION_ANNOY_CROSS        55.0f   /* above this the lines get shirty */
+#define MOTION_ANNOY_DECAY_PER_S   2.0f
+#define MOTION_COMPLAIN_GAP_MS    6000UL  /* no bubble spam, ever            */
+
+/* Calibration capture. Short enough that a child will hold still for it. */
+#define MOTION_CAL_MS             1400UL
+#define MOTION_CAL_SAMPLES        24
+#define MOTION_CAL_MAX_SPREAD     0.18f   /* g; above this the capture is rejected */
+
 /* --- Pre-hatch selector geometry [PHASE 9.5] ----------------------------
  * The layout now carries a gender row as well as seven colours, so it was
  * re-derived from scratch rather than squeezed. Every gap below is stated as
