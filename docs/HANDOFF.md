@@ -1,10 +1,20 @@
 # Visitor — Continuation / Handoff
 
 Rewritten 2026-08-31 at the end of Phase 10.
+Updated 2026-09-01 for the v1.0.0 pre-release — see §0, §1 and §2f.
 
 ---
 
 ## 0. Status
+
+**The v1 release-candidate bug sweep has STARTED and is IN PROGRESS.** Two
+commits have landed on `wip/phase8-9-pacing` and are pushed. Both are built
+and flashed; **neither has been accepted on hardware yet**, and under the
+phase gate that means they are not finished. §2f says exactly what was
+changed and §9 lists the six tests that decide it.
+
+The user calls this state **"v1.0.0 pre-release"**. It is NOT tagged `v1.0.0`
+and NOT merged to `main`; both need asking for.
 
 **Phase 10 (audio, voice packs, IMU personality, tilt calibration, settings)
 is COMPLETE and ACCEPTED on hardware.** The tag `phase10-feature-baseline`
@@ -25,10 +35,9 @@ Phase 9.5 remains COMPLETE and ACCEPTED, tagged `phase9.5-polish-baseline`.
 | Pacing & balance pass | COMPLETE, tagged `pacing-balance-baseline` |
 | 9.5 Personality / dreams / identity / refinement | COMPLETE, tagged `phase9.5-polish-baseline` |
 | **10 IMU personality, tilt calibration, audio, voice** | **COMPLETE, tagged `phase10-feature-baseline`** |
+| **v1 bug sweep / v1.0.0 pre-release** | **IN PROGRESS — committed and flashed, NOT yet accepted on hardware** |
 
-**The next step is a full v1 release-candidate bug hunt, in a FRESH context.**
-It was deliberately not started in the Phase 10 session. Nothing else is
-outstanding for Phase 10.
+Nothing is outstanding for Phase 10.
 
 **Do not tag v1.0.0 and do not merge to `main` without being asked.**
 
@@ -41,7 +50,12 @@ configured" was stale and is corrected here.
     origin      https://github.com/beekeeper7278/visitor-tamagotchi.git
     old-origin  https://github.com/beekeeper7278/tamagotghi.git   (previous repo)
 
-    HEAD    (tag: phase10-feature-baseline)  Phase 10 verification: two fixes
+    HEAD     311f2b9  v1.0.0 pre-release: establish the clock BEFORE the
+                      hatch, and never replay a clock correction as elapsed
+                      life                                          [§2f]
+    c0603c7  v1 bug sweep: four defects, and the harness that measured
+             them                                                   [§2f]
+    5ee14da (tag: phase10-feature-baseline)  Phase 10 verification: two fixes
                                              and the diagnostics that found them
     ab1f5f2  Phase 10: the Visitor speaks - Piper voice packs, one per gender
     3361bb1  Phase 10: wire audio through gameplay; formant synth voice
@@ -51,9 +65,22 @@ configured" was stale and is corrected here.
     305c2b7 (tag: phase9.5-polish-baseline)
     496cf0c (tag: pacing-balance-baseline)
 
-`main` is still at `e8726d0`. The phase gate stands: work is committed and
-tagged only after the user accepts it on hardware. Ask before committing; do
-not merge to `main` unilaterally.
+`main` is still at `e8726d0`. The phase gate stands: work is TAGGED only
+after the user accepts it on hardware. Ask before committing; do not merge to
+`main` unilaterally.
+
+**A safety branch exists.** `safety/v1.0.0-pre-release-2026-09-01` points at
+`311f2b9` and is pushed. It is a fixed snapshot taken because the sweep had
+accumulated ~350 lines of uncommitted work that existed only in one working
+tree; it is not a working branch and should not move. Delete it once the
+sweep is accepted and tagged.
+
+The two sweep commits are deliberately SEPARATE, and the split cost some
+effort worth not undoing: `sim.cpp` and `diag.cpp` contain work from both, so
+they were split at hunk level, and `c0603c7` was built standalone in a
+throwaway worktree to prove the history bisects cleanly rather than carrying
+a broken intermediate. Either commit can be reverted without the other, which
+is what the phase gate needs when only one of them turns out to be wrong.
 
 `pre-phase10-baseline` (`7d13503`) is the clean rollback point before any
 Phase 10 work.
@@ -228,10 +255,13 @@ them no game round could be reached from the console at all.
 
 ## 2d. Hatch-countdown layout [presentation only]
 
-`EGG_ROOT_Y` (-6) exists because the SELECTOR screen needs the room: two
-colour rows, a gender row and START fill everything below 156. The moment
-START is pressed all of that disappears, and the shell was left stranded
-under the HUD with three quarters of the panel empty below it.
+`EGG_ROOT_Y` (-6) exists because the SELECTOR screen needs the room: the
+Date & Time card, a colour row, a gender row and START fill everything below
+154. (That was TWO colour rows and no date card until the v1.0.0 pre-release
+re-derived the layout — see §2f. `EGG_ROOT_Y` itself is unchanged, which is
+why everything in this section still holds.) The moment START is pressed all
+of that disappears, and the shell was left stranded under the HUD with three
+quarters of the panel empty below it.
 
 The countdown now DROPS the egg to `EGG_HATCH_ROOT_Y`, and the label comes
 down with it out of the HUD row:
@@ -308,7 +338,8 @@ deliberately bypasses the mute gate so "you are muted" is never mistaken for
 ### Settings record, calibration, Gravity Reactions
 
 **Settings live in their own NVS key `visitors/cfg`**, versioned + CRC'd,
-20 bytes — NOT in `save_t`. Three reasons, worst first: `save_t` is 433 bytes
+20 bytes at v1 and 28 at v2 — NOT in `save_t`. (v2 and its migration arrived
+with the v1.0.0 pre-release; see §2f.) Three reasons, worst first: `save_t` is 433 bytes
 against a 448 budget and the static_asserts fail at 448; these settings belong
 to the DEVICE, so a new Visitor or an `X` must not reset the volume a parent
 chose or the calibration a child captured; and the pet blob is rewritten every
@@ -454,6 +485,12 @@ The single-key namespace filled up in Phase 9, so Phase 10 sits behind TAB.
     S arm the motion history recorder
     R restore the clock to 16:00 (awake band, after N/G/A)
 
+Added later by the v1.0.0 pre-release (§2f), same TAB prefix:
+
+    > clock +5 days    < clock -5 days   (CLOCK CORRECTION, not time travel)
+    a clock + RTC anchor report
+    B backup the Visitor   U restore it   i backup slot info
+
 Everything here is NON-DESTRUCTIVE: the Visitor is never hatched, re-gendered
 or ended to test a sound. `audio_set_pack_override()` and
 `voice_set_force_miss()` are the two test seams that make that possible, and
@@ -519,6 +556,9 @@ that Visitor does not have.
   10 touches neither `storage.h`/`storage.cpp` nor `pet.h` (confirmed by
   `git diff pre-phase10-baseline..HEAD`), and every boot re-confirms
   `sizeof(save_t) 433 / schema 8 / load OK`.
+  **This gap is now closable**: `TAB B` / `TAB U` (§2f) back the real save up
+  and put it back, so the fixtures can be run on a device carrying a Visitor
+  somebody cares about.
 
 ### A correction worth keeping
 
@@ -538,6 +578,229 @@ whoever wants it, not a defect.
 Related: a reported "pulse down" turned out to be a deliberately odd tilt
 calibration (`down +0.764`) making flat read as a 0.77 g tilt, so the slide
 was legitimately active. Not a bug.
+
+## 2f. The v1 bug sweep / v1.0.0 pre-release — IN PROGRESS, NOT accepted
+
+Two commits, `c0603c7` and `311f2b9`. Both build and are flashed to the
+board. **Neither has been signed off on hardware**, so under the phase gate
+neither is finished. §9 lists what decides it.
+
+### c0603c7 — four defects the sweep found
+
+Every one was silent. None crashed, and each produced a Visitor that looked
+entirely plausible.
+
+**Per-boundary work ran once, not once per boundary.** `sim_catch_up()` and
+`care_tick()` both read `if (pet_apply_stage_for_day(d) > 0) { ...work... }`,
+which walks EVERY boundary inside the condition and then does the work for
+the final stage only. An absence spanning Baby -> Kid -> Teen never picked a
+Kid form: `evo_path[]` was left blank at Kid, and the teen selector's "was a
+Good Kid" +/-5 bias read a `form_id` that was still `FORM_BABY` — so a
+Visitor cared for well while the device was OFF was structurally denied the
+bonus it had earned. `pet_apply_one_stage()` advances at most one boundary
+and every caller that does per-boundary work loops on it. Measured with the
+new `tools/stagejump` against the same care history crossing the same
+boundaries with the device ON: **the teen form differed in 39% of cases and
+`evo_path[]` in 100%.**
+
+**Evolution was scored at "now", not at the boundary it was deciding.**
+`evolve_scores()` divides by stage days measured against `pet_age_days()`,
+which at a boundary reached during a catch-up is the END of the absence. A
+Visitor that became a Kid on day 1 but was not switched on again until day 4
+had its Baby stage measured as 4.5 days instead of 1.5 — games actually
+played divided by time the Visitor had not yet lived, diluting `engage` to a
+third. `evolve_scores_on(day)` takes the boundary day; over 8400 care
+histories it flips the chosen form in 1% of them outright.
+
+**Every reboot re-simulated the previous session's uptime.** `last_sim_ts`
+was written only at boot, so it held the BOOT time for the whole session
+while `care_tick()` simulated live from `millis()`. Measured on hardware: a
+12-second flash produced a 342-second catch-up, double-charging every meter,
+aging floor messes at twice real time, double-weighting the evolution
+accumulators and handing `visit_advance()` extra departure evaluations.
+
+**The animation done-callback had two owners and one slot.** `care_init()`
+registered the bathroom handler at boot; `evolve_present()` overwrote it at
+the first stage change and never restored it. Since every Visitor evolves on
+day 1, the bathroom handler was dead for the rest of every visit — no "Oof...
+much better.", and, the part that mattered, **no `care_return_to_bed()` after
+a bathroom trip taken during sleep hours, so the Visitor was left standing on
+the floor at 3 am.** Both handlers already filter by animation and are
+naturally disjoint, so `ui_pet_add_done_cb()` registers them side by side.
+
+Also landed: **`storage_backup()` / `storage_restore()`**, a byte-exact copy
+of the live save in its OWN NVS namespace `visitorb`. The namespace is the
+point — `storage_wipe()` calls `Preferences::clear()`, so a backup stored
+beside the save would be destroyed by the very reset it exists to undo. RAW
+BYTES, not a `save_t`, so a backup taken before a migration restores what was
+actually there rather than a re-serialised interpretation. **This is what
+finally makes the destructive fixtures safe to run on a real Visitor** — the
+gap §2e had to record as "not verified, and why". Wrap them: `TAB B`, run
+`X` or `V { " #`, `TAB U`, then reboot via a full upload or a power cycle.
+
+### 311f2b9 — Date & Time before the hatch, and safe clock correction
+
+The user's report, in their words: a Visitor could hatch while the RTC still
+held an old development date, and correcting the date forward several days
+afterwards made the Visitor think those days had passed — instant aging and
+evolution.
+
+**Why `rtc_trusted()` could not catch it.** It means two things and only two:
+the sticky oscillator-stop flag is clear, and the reading is inside a
+plausible window. **A development date satisfies both perfectly.** There is
+no later moment at which anything can tell.
+
+So the missing fact is recorded explicitly: **`settings.clock_confirmed`** —
+"a human set this and the write was read back and verified". It is
+DEVICE-scoped rather than part of `save_t`, for the same three reasons the
+volume is (§2e): the clock belongs to the device, a new Visitor must not make
+a parent re-enter it, and a farewell or an `X` must not wipe it. It is
+cleared at boot whenever the RTC has gone untrusted, because at that point it
+describes a clock that no longer exists. `scr_main_clock_ready()` is
+`rtc_trusted() && settings_clock_confirmed()`, and it is the gate.
+
+**The pre-hatch screen now reads top to bottom as the order things must
+happen in:** SET DATE & TIME, colour, gender, START. The date card carries
+the instruction and the live clock value on its second line, so "what is it
+set to" and "change it" are one control rather than a readout a parent has to
+go looking for. START is drawn dead until the clock is confirmed, and a press
+on a dead START **opens the setter** rather than doing nothing — a control
+that visibly refuses and then offers no route forward is how a parent
+concludes the device is broken.
+
+**`hatch_ts` now has exactly ONE production writer**, at the instant the
+shell opens, so "a newly hatched Visitor starts at age 0" is true by
+construction rather than by a reset something else could undo.
+`days_alive_max` is zeroed with it: it is a monotonic floor that
+`pet_refresh_age()` clamps `days_alive` UP to, so a predecessor's high-water
+mark would otherwise have shown a newborn at its age.
+
+**A CLOCK CORRECTION IS THE OPPOSITE OF A CATCH-UP.** `sim_catch_up()`
+answers "the clock moved while we were not looking, so that much life
+happened". A parent fixing a wrong date is the other thing entirely: the
+clock moved and NOTHING happened. `sim_clock_corrected()` lives beside it in
+`sim.cpp` for exactly that reason, and REBASES rather than replaying. Every
+timestamp this project stores is an absolute reading of the clock that has
+just been found wrong, so they all move by one delta and every DURATION
+between them survives:
+
+    hatch_ts        the bug itself - age is (now - hatch_ts), so moving
+                    `now` alone ages the Visitor by the correction
+    egg_hatch_ts    an absolute deadline; +5d hatches instantly, -5d
+                    strands the egg
+    depart_due_ts   measures a held farewell against the 48 h cap; forward
+                    blows the cap, backward underflows the subtraction
+    journal[].ts    dated milestones would print days BEFORE the corrected
+                    arrival they followed
+    last_play_ts    the repeat-play window (gamerec); either direction
+                    wrongly expires a thirty-second-old streak
+    last_sim_ts     set to the new reading OUTRIGHT, not shifted
+
+**That last line is the one that kills the fake offline day.** Otherwise the
+next boot measures the correction as an absence and charges five days of
+hunger, cleanliness, bathroom and departure evaluation that never happened.
+
+**Deliberately NOT rebased**, and this is a decision rather than an omission:
+archived Visit Records (sealed history of previous Visitors, no date is ever
+rendered, and `days` is a stored duration a correction cannot distort), and
+every `millis()` timer (they measure uptime, which an RTC write does not
+touch). Anything added later that stores an absolute clock reading has to
+join the list in `sim.cpp`, or a correction will silently break whatever
+duration it measures.
+
+**The confirm path order is load-bearing.** Read the old value FIRST — after
+`rtc_set()` it is gone for good and the delta is unrecoverable. Then write.
+Then verify the READ-BACK field by field, because `rtc_set()` proves the
+clock is trusted, not that it holds the value asked for. Then rebase. Then
+FORCE the save: a power cut between the RTC write and the next periodic save
+would bring back a corrected clock beside uncorrected anchors, which is the
+original bug reconstructed on the next boot.
+
+**A second defect in the same three lines.** For an EGG, `if (!p->hatch_ts) {
+p->hatch_ts = now; pet_apply_stage_for_day(0); }` gave an unhatched Visitor
+an age baseline and then — since `STAGE_EGG` is 0, `STAGE_BABY` is 1 and day
+0 means Baby — **promoted the egg straight to a Baby**, skipping the
+countdown, the colour and gender resolution, the reveal, the first words and
+the hatch chime. Setting the clock hatched the egg.
+
+**NO HARDCODED DATES.** The setter seeded from a literal `2026-08-28`, which
+is precisely how an RTC ends up plausible and wrong. It now seeds from the
+RTC when that is already sensible (so correcting is an adjustment) and
+otherwise from `rtc_build_stamp()` — the firmware build date, which is never
+in the future and moves every flash. Caveat worth knowing: `__DATE__` is
+fixed when `rtc.cpp` is compiled, so an incremental build that does not
+recompile it keeps an older stamp. That only makes the seed staler, never
+later than now, which is the safe direction. The console clock fixtures lost
+their literal dates too — `N`/`G`/`A` move the hands without throwing the
+calendar back to whenever the file was written.
+
+**Pre-hatch layout, re-derived.** Fitting a 56 px card into a panel that
+already ran to 442 of 448 needed 76 px back. There were only three places to
+find them, and the choice is the point:
+
+    the egg      the emotional point of the screen - what the child is
+                 waiting for. UNTOUCHED; EGG_ROOT_Y is still -6.
+    START        the one control that must be unmissable, and the only one
+                 a four-year-old presses alone. Gives up 8 px (72 -> 64)
+                 and stays 288 wide.
+    the colours  two rows of 80x52 become ONE row of seven 46x56.
+
+    egg preview   root y = EGG_ROOT_Y (-6); the shell spans   30 .. 148
+    DATE & TIME  154 .. 210      (320 x 56, two lines of text)
+    colour row   230 .. 286      (7 swatches, 46 x 56)
+    gender row   306 .. 358      (3 buttons, 108 x 52)
+    DEAD SPACE                                                358 -> 378 = 20
+    START        378 .. 442      (64 tall, 6 px clear of the 448 panel)
+
+So the colour swatches lost width and gained height; everything else got
+bigger or stayed the same. Every gap is `static_assert`ed in `scr_main.cpp`,
+and a new assertion **fails the build if any control drops below the 44 px
+minimum touch target** — the numbers are checked by the compiler, not by
+looking at the panel, which is the standing rule here (§12).
+
+### Diagnostics: correction vs. time travel
+
+**These are opposite tools and confusing them will waste a session.**
+
+    %  .  ,     TIME TRAVEL. Moves hatch_ts BACKWARDS and leaves the clock
+                alone, so the Visitor ages through the derived path.
+                UNCHANGED by this work, deliberately.
+    TAB > <     CLOCK CORRECTION. Moves the WALL CLOCK +/-5 days through the
+                production path the Settings page uses. The age must come
+                out UNCHANGED; the command prints before/after and PASS/FAIL.
+    TAB a       clock + anchor report: health, whether a human confirmed it,
+                whether START is allowed, and every anchor a correction
+                rebases.
+
+The clock SETTERS (`c`, `N`, `G`, `A`) now route through the same correction
+path, so a test of the sleep window is no longer also an untracked test of
+the age clock.
+
+### Verified so far, and what that is worth
+
+On the HOST only, and stated as such: unix<->civil round-trip every 6 h
+across 2024-2055, age preserved across +/-1, +/-5 and +/-365 day corrections,
+the saturation guards, and the space-padded `__DATE__` parser. The layout
+gaps are `static_assert`s, so the build passing IS the layout check.
+
+**None of this is a hardware pass.** §9.
+
+### Settings record: v1 -> v2
+
+`visitors/cfg` grew from 20 to 28 bytes for `clock_confirmed` and
+`clock_set_ts`. The header had always promised an append was safe; the code
+did not keep that promise — the old loader discarded the whole record on a
+version bump, which would have cost a parent their volume and a child their
+tilt calibration for the sake of one new byte. It now migrates a v1 record
+forward, CRC-checked against v1's own extent, with two `static_assert`s
+holding the frozen size and the tail offset (the same trap as
+`SAVE_V4_SIZE`, §3).
+
+`clock_confirmed` defaults to 0 on that migration, **including on a device
+with a trusted clock and a live Visitor.** Inferring "somebody must have set
+it" would fabricate the very confirmation the flag exists to demand. The
+consequence is mild and intended: an upgrading device asks for the date once,
+at its next egg. A live Visitor is untouched — the gate is pre-hatch only.
 
 ## 3. Save schema
 
@@ -575,6 +838,12 @@ Separate versioned NVS keys, deliberately NOT part of the pet blob:
 - `visitorg/grec` — game records (`gamerec.cpp`)
 - `visitorv/recs` — Visit Records, 327 B x 8 = 2624 B (`visitrec.cpp`).
   VISITREC_VERSION is 2; growing the record discarded v1 history once.
+- `visitors/cfg` — device settings, `SETTINGS_VERSION` 2, 28 B
+  (`settings.cpp`). v1 was 20 B; v2 appends `clock_confirmed` and
+  `clock_set_ts` and MIGRATES rather than discarding — see §2f.
+- `visitorb/bak` — the safe backup slot (`storage.cpp`), raw bytes of the
+  live save. Its own namespace specifically so `storage_wipe()`, which
+  clears the whole `visitor` namespace, cannot reach it — see §2f.
 
 Visit Records live apart because the pet blob is rewritten every few minutes
 and history must never be at risk from that path.
@@ -632,6 +901,25 @@ The old code accumulated `elapsed_sec / 86400` in `sim_catch_up()` only, which
 24 h to zero, and (c) never used `hatch_ts`. `care_tick()` now also calls
 `pet_apply_stage_for_day()`. `days_alive` is a cache; `days_alive_max` is
 monotonic so a clock correction cannot age backwards.
+
+**A CLOCK CORRECTION IS NOT ELAPSED TIME.** `sim_catch_up()` means "the
+clock moved while nobody was looking, so that much life happened". A human
+fixing a wrong date means the clock moved and NOTHING happened.
+`sim_clock_corrected()` rebases every RTC-anchored timestamp by one delta so
+that every duration between them survives, and sets `last_sim_ts` to the new
+reading outright so the correction cannot be replayed as an absence on the
+next boot. The complete anchor list is in `sim.cpp`; anything added later
+that stores an absolute clock reading must join it. Full reasoning in §2f.
+
+**`hatch_ts` has exactly ONE production writer**, at the moment the shell
+opens. That is what makes "a newly hatched Visitor starts at age 0" true by
+construction. `days_alive_max` is zeroed with it, because it is a monotonic
+floor that `pet_refresh_age()` clamps `days_alive` UP to.
+
+**A Visitor may not hatch against an unconfirmed clock.** `rtc_trusted()`
+cannot distinguish a correct date from a plausible wrong one, so
+`settings.clock_confirmed` records that a human set it and the write was
+verified. START is gated on both. §2f.
 
 **Stage boundaries are floats:** Baby 0, Kid 1.0, Teen 3.0, Adult 6.0.
 Rule: 1 real day = 1 Visitor year, kept literally — Adult at age 6 is correct
@@ -880,23 +1168,55 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
 5. **LVGL heap** sits at ~20-23 KB steady (41-47% of the 48 KB
    `LV_MEM_SIZE`), peaking ~29 KB with the Journal open, fragmentation 1-7%.
    That is ~4 KB above the pre-9.5 baseline: the pre-hatch selector objects
-   (seven swatches, six stripes, three gender buttons, the reveal banner) are
-   permanent on `scr_main` and stay resident after the Visitor hatches.
+   (seven swatches, six stripes, three gender buttons, the Date & Time card
+   with its two labels, the reveal banner) are permanent on `scr_main` and
+   stay resident after the Visitor hatches. The v1.0.0 pre-release re-derived
+   that layout but did not change the object COUNT materially — one row of
+   seven swatches instead of two rows of the same seven, plus three objects
+   for the date card. **Re-measure at the next heap report rather than
+   assuming.**
    Verified stable across repeated page sweeps - it is a fixed cost, not a
    leak. Do not raise `LV_MEM_SIZE` without measuring a real peak.
 6. **A marginal USB cable** was part of the first serial wedge. See §2b.
 
 ## 9. Exact next steps
 
-1. Nothing is outstanding for Phase 10. It is committed and tagged
-   `phase10-feature-baseline`, and pushed to `origin`.
-2. **NEXT: a full v1 release-candidate bug hunt, in a FRESH context.**
-   Deliberately not started in the Phase 10 session.
-3. Still awaiting a decision on the dead Grumpy sleep clause (§8.1b). It is a
-   BALANCE change, deliberately not made unilaterally, and it was explicitly
-   left untouched through Phase 10 verification. It belongs in the bug/balance
-   sweep, not in a feature phase.
-4. Do NOT tag v1.0.0 and do NOT merge to `main` without being asked.
+1. **VERIFY `311f2b9` ON HARDWARE. This is the blocking item.** Six tests,
+   from the user's own report. `TAB a` before and after each gives the
+   anchors and a PASS/FAIL age line:
+
+       1  wrong RTC date -> correct it BEFORE hatch -> hatch -> age 0
+       2  live Visitor -> clock +5 days  -> age preserved   (TAB >)
+       3  live Visitor -> clock -5 days  -> age preserved   (TAB <)
+       4  neither correction produces fake offline simulation:
+          no aging, no evolution, no hunger/cleanliness/bathroom advance,
+          no departure trigger, no journal entries
+       5  reboot -> corrected RTC and preserved age/state both survive
+       6  a GENUINE powered-off absence afterwards still ages and
+          simulates correctly (`h` / `H` / `j`, or a real power-off)
+
+   Worth exercising alongside: hatch with the clock unconfirmed and check
+   START is dead and the setter opens; correct the clock MID-COUNTDOWN and
+   check the countdown neither fires early nor strands.
+
+2. **Verify `c0603c7` on hardware.** Largely covered by normal play plus the
+   `%` age jumps across two boundaries in one step, which is the case the
+   per-boundary fix exists for. `TAB B` / `TAB U` now make the destructive
+   migration fixtures safe to run (§8, "Not verified, and why").
+
+3. Only after both: tag. **Do NOT tag `v1.0.0` and do NOT merge to `main`
+   without being asked.** Delete `safety/v1.0.0-pre-release-2026-09-01` once
+   the sweep is tagged (§1).
+
+4. Still awaiting a decision on the dead Grumpy sleep clause (§8.1b). It is a
+   BALANCE change, deliberately not made unilaterally. It was left untouched
+   through Phase 10 verification AND through this sweep so far — it is still
+   the user's call.
+
+5. The sweep is not finished as a sweep. What has been swept so far is the
+   clock/age/hatch surface and the four defects in §2f; nothing has
+   systematically gone after the games, the menu/pager, the bubble system or
+   the farewell path.
 
 Voice packs are NOT in git. A fresh clone needs `pio run -t uploadfs` with
 `data/voice_boy.bin` and `data/voice_girl.bin` rebuilt per
@@ -932,10 +1252,15 @@ seconds. Use `~/.platformio/penv/bin/python` (it has pyserial).
 
     ?  help              *  age-clock report      <  evolution explain
     .  age +6h           ,  age +1h              >  discipline report
+       ^ these move hatch_ts (TIME TRAVEL). To move the WALL CLOCK, see the
+         TAB keys below - they are opposite tools and mixing them up will
+         cost you a session.
     +  EXCELLENT care    =  MID care             _  POOR care
     F  force next stage  O  arm offline reveal   /  force mischief window
     h/H/j  simulate 8h / 72h / 8 days away       T  fast-forward 30 min
     N/G/A  clock -> bedtime / wake / nap         l  toggle lights
+           (these keep TODAY'S date and rebase the Visitor's anchors)
+    c  set the RTC to the firmware build stamp (never a hardcoded date)
     7/8/9  burger / fruit / cake   0  bathroom   C  clean
     Q/q/E/z  the four games        K  exit game  a  game records
     J  visit records     @  jump to departure  ;  acknowledge  :  start egg
@@ -953,6 +1278,14 @@ seconds. Use `~/.platformio/penv/bin/python` (it has pyserial).
     X  reset Visitor     Y  persistence fidelity  y  suspend simulation
     m  LVGL heap         v  pager/pet state       s  storage self-test
     M  menu toggle       P/D  pet screen / Phase 1 test card
+    --- v1.0.0 pre-release (TAB prefix) ---
+    TAB >  clock +5 days     TAB <  clock -5 days   (CLOCK CORRECTION:
+           drives the production path; the age must NOT change, and the
+           command prints before/after and PASS/FAIL)
+    TAB a  clock + RTC anchor report (health, confirmed?, START allowed?,
+           every anchor a correction rebases)
+    TAB B  backup the Visitor   TAB U  restore it   TAB i  slot info
+           (own NVS namespace; survives X and the V { " # fixtures)
 
 `y` leaves simulation SUSPENDED and is not persisted — power-cycle to clear.
 A common self-inflicted test failure is leaving it on and concluding a feature
@@ -987,6 +1320,9 @@ Kept for the record; see §2e for what was actually built and verified.
   arithmetic rather than trusting a plausible explanation: the egg-selector
   hitbox overlap (-4 px), the `SAVE_V4_SIZE` error, the invisible hatched Baby,
   the untracked Higher/Lower timer, and the destructive storage self-test.
+  The v1 sweep added more of the same kind: the clock that hatched the egg,
+  and the per-boundary work that ran once instead of once per boundary —
+  both found by reading the control flow, not by reproducing a symptom.
 - Photos from the user are the fastest way to diagnose rendering problems.
 - Existing docs worth reading: `PHASE1-RESULTS.md`, `PHASE2-RESULTS.md`,
   `PHASE4-REQUIREMENTS.md`, `PHASE5-6-OFFLINE-REQUIREMENTS.md`,
