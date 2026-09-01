@@ -47,6 +47,12 @@ void      scr_main_egg_refresh(void);   /* egg UI + hatch countdown */
  * a different code path from the button proves nothing about the button. */
 void      scr_main_egg_start(uint32_t secs);
 
+/* May a new Visitor hatch yet? True only when the RTC is trustworthy AND a
+ * human has set and verified the date - see the note above the definition in
+ * scr_main.cpp, and settings.h for why rtc_trusted() on its own is not the
+ * same question. */
+bool      scr_main_clock_ready(void);
+
 /* Virtual room darkness. Dims the pet scene ONLY - never the menus, and
  * never the sleeping Zs, which are drawn above it. */
 void      scr_main_set_room_dark(bool dark);

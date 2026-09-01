@@ -134,6 +134,21 @@ void setup()
     pet_init();
     btn_init(menu_toggle);
     rtc_begin();
+
+    /* THE CLOCK CONFIRMATION IS ABOUT A CLOCK THAT STILL EXISTS.
+     *
+     * settings_clock_confirmed() records that a human set the date and the
+     * write was verified. If the RTC has since gone untrusted - a stopped
+     * oscillator, a dead backup cell, a reading outside the plausible window
+     * - that confirmation is about a clock that is no longer there, and
+     * leaving it set would let a new Visitor hatch against whatever the
+     * hardware now reads. Cleared here, immediately after rtc_begin() has
+     * evaluated the health and before anything can consult either. */
+    if (!rtc_trusted() && settings_clock_confirmed()) {
+        Serial.printf("CLOCK: confirmation CLEARED - RTC is %s\n",
+                      rtc_health_name(rtc_health()));
+        settings_set_clock_confirmed(0);
+    }
     gamerec_begin();
     visitrec_begin();
     discipline_init();

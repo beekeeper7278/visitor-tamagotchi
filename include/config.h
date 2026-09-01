@@ -762,41 +762,81 @@
 #define MOTION_CAL_SAMPLES        24
 #define MOTION_CAL_MAX_SPREAD     0.18f   /* g; above this the capture is rejected */
 
-/* --- Pre-hatch selector geometry [PHASE 9.5] ----------------------------
- * The layout now carries a gender row as well as seven colours, so it was
- * re-derived from scratch rather than squeezed. Every gap below is stated as
- * arithmetic so it can be CHECKED rather than eyeballed - the last selector
- * bug here was a -4 px overlap that looked fine:
+/* --- Pre-hatch selector geometry [v1.0.0 pre-release] -------------------
+ * RE-DERIVED, because the screen gained a control it cannot do without: the
+ * date and time have to be established BEFORE the hatch, so the pre-hatch
+ * screen now carries the "SET DATE & TIME" card as step 1 of four.
  *
- *   egg preview   root y = EGG_ROOT_Y (-6); the shell spans  30 .. 148
- *   colour row 0  156 .. 208      (4 swatches, 80 x 52)
- *   colour row 1  214 .. 266      (3 swatches: teal, yellow, Surprise)
- *   gap                            266 -> 292 = 26 px
- *   gender row    292 .. 344      (3 buttons, 108 x 52)
- *   DEAD SPACE                     344 -> 370 = 26 px   (spec wants >= 20-24)
- *   START         370 .. 442      (72 tall, 6 px clear of the 448 panel)
+ * The four steps read top to bottom in the order they must be done:
  *
- * Row 0 is 4*80 + 3*10 = 350 px in a 368 px panel: 9 px a side.
+ *   1  SET DATE & TIME     (and what the clock currently says)
+ *   2  pick a colour
+ *   3  pick a boy or a girl
+ *   4  START
+ *
+ * WHAT HAD TO GIVE, and why it was the colour row. Adding a 56 px card and
+ * its gap to a panel that already ran to 442 of 448 needed 76 px back. There
+ * were only three places to find them:
+ *
+ *   the egg      118 px tall and the emotional point of the screen - it is
+ *                what the child is waiting for. Untouched (EGG_ROOT_Y is
+ *                still -6 and the shell still spans 30..148).
+ *   START        the one control that MUST be unmissable, and the only one
+ *                a four-year-old presses on their own. It gives up 8 px
+ *                (72 -> 64) and stays 288 px wide.
+ *   the colours  two rows of 80x52 become ONE row of seven 46x56.
+ *
+ * So the colour swatches lost width and gained height. 46 px is above the
+ * 44 px minimum touch target, they are 7 px apart so no two are adjacent
+ * pixels, and a colour is the easiest thing on the screen to aim at - it is
+ * a solid block of the colour it selects. Everything else on the screen got
+ * bigger or stayed the same size.
+ *
+ *   egg preview   root y = EGG_ROOT_Y (-6); the shell spans   30 .. 148
+ *   gap                                                       148 -> 154 = 6
+ *   DATE & TIME  154 .. 210      (320 x 56, two lines of text)
+ *   gap                                                       210 -> 230 = 20
+ *   colour row   230 .. 286      (7 swatches, 46 x 56)
+ *   gap                                                       286 -> 306 = 20
+ *   gender row   306 .. 358      (3 buttons, 108 x 52)
+ *   DEAD SPACE                                                358 -> 378 = 20
+ *   START        378 .. 442      (64 tall, 6 px clear of the 448 panel)
+ *
+ * Colour row is 7*46 + 6*7 = 364 px in a 368 px panel: 2 px a side.
  * The gender row is 3*108 + 2*12 = 348 px: 10 px a side.
  *
+ * Every gap is named below and asserted in scr_main.cpp. The last selector
+ * bug here was a -4 px overlap that looked completely fine by eye, so none
+ * of these numbers is checked by looking at the panel.
+ *
  * A touch that BEGINS on a selector can never end on START, because the two
- * hitboxes are 26 px apart and LVGL delivers CLICKED to the object the press
+ * hitboxes are 20 px apart and LVGL delivers CLICKED to the object the press
  * started on. Both conditions matter; the gap alone was not the old bug. */
 #define EGG_ROOT_Y              (-6)
-#define EGG_SW_W                80
-#define EGG_SW_H                52
-#define EGG_SW_GAP_X            10
-#define EGG_SW_ROW0_Y           156
-#define EGG_SW_ROW1_Y           214
+#define EGG_DATE_X              24
+#define EGG_DATE_W              (BSP_LCD_W - 2 * EGG_DATE_X)
+#define EGG_DATE_Y              154
+#define EGG_DATE_H              56
+#define EGG_SW_W                46
+#define EGG_SW_H                56
+#define EGG_SW_GAP_X            7
+#define EGG_SW_ROW_Y            230
 #define EGG_GENDER_W            108
 #define EGG_GENDER_H            52
 #define EGG_GENDER_GAP_X        12
-#define EGG_GENDER_Y            292
-#define EGG_START_Y             370
-#define EGG_START_H             72
+#define EGG_GENDER_Y            306
+#define EGG_START_Y             378
+#define EGG_START_H             64
 
-/* The two gaps, named so a build can assert them. */
-#define EGG_GENDER_GAP_ABOVE    (EGG_GENDER_Y - (EGG_SW_ROW1_Y + EGG_SW_H))
+/* Where the egg shell actually ends, so the gap below it is arithmetic
+ * rather than a remembered number. EGG_SHELL_TOP_IN_BOX is defined with the
+ * countdown layout further down and is asserted against layout_egg(). */
+#define EGG_SHELL_BOTTOM        (EGG_ROOT_Y + PET_BOX_PX - 6)
+
+/* The four gaps, named so a build can assert them. */
+#define EGG_DATE_GAP_ABOVE      (EGG_DATE_Y - EGG_SHELL_BOTTOM)
+#define EGG_SW_GAP_ABOVE        (EGG_SW_ROW_Y - (EGG_DATE_Y + EGG_DATE_H))
+#define EGG_GENDER_GAP_ABOVE    (EGG_GENDER_Y - (EGG_SW_ROW_Y + EGG_SW_H))
 #define EGG_START_DEAD_BAND     (EGG_START_Y - (EGG_GENDER_Y + EGG_GENDER_H))
 
 /* --- Hatch-countdown layout [PRESENTATION ONLY] -------------------------

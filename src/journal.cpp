@@ -34,6 +34,18 @@ void journal_add(uint8_t type, uint8_t arg, uint16_t value)
 
 uint8_t journal_count(void) { return s_n; }
 
+void journal_shift_ts(int32_t delta)
+{
+    if (!delta) return;
+    uint8_t moved = 0;
+    for (uint8_t i = 0; i < s_n; i++) {
+        if (!s_ring[i].ts) continue;        /* logged with no trusted clock */
+        s_ring[i].ts = rtc_shift_ts(s_ring[i].ts, delta);
+        moved++;
+    }
+    if (moved) Serial.printf("JOURNAL: %u dated entries rebased\n", moved);
+}
+
 bool journal_line(uint8_t idx, char *buf, size_t len)
 {
     if (idx >= s_n) return false;

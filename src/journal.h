@@ -33,6 +33,14 @@ void journal_load(const save_t *b);
 void journal_store(save_t *b);
 void journal_clear(void);
 
+/* Move every recorded date by a CLOCK CORRECTION. See sim_clock_corrected().
+ *
+ * These are absolute readings of the same clock that has just been found to
+ * be wrong, so leaving them alone would print milestones dated days before
+ * the (corrected) arrival they followed. Entries stamped 0 - logged while
+ * the clock was untrusted - stay 0: "no date" is not a date to move. */
+void journal_shift_ts(int32_t delta);
+
 #ifdef __cplusplus
 }
 #endif

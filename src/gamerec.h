@@ -48,6 +48,15 @@ float gamerec_pending_multiplier(uint8_t game, uint32_t now_ts);
 
 uint8_t     gamerec_favorite(void);      /* most-played; GAME_COUNT if none */
 const char *gamerec_name(uint8_t game);
+/* Move the streak stamp by a CLOCK CORRECTION. See sim_clock_corrected().
+ *
+ * last_play_ts is an RTC reading, and the repeat-play penalty is the
+ * difference between it and now. A +5 day correction would expire a streak
+ * that is thirty seconds old; a backward one would underflow the unsigned
+ * subtraction and expire it too. Shifting keeps the GAP, which is the only
+ * thing this timestamp is ever used for. */
+void        gamerec_shift_ts(int32_t delta);
+
 void        gamerec_report(void);
 /* Called when the Visitor advances a life stage. Clears the BEST results
  * only - play counts, totals and favourite-game history are kept, because

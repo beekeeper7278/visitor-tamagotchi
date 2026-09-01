@@ -12,6 +12,7 @@
 #include "evolve.h"
 #include "forms.h"
 #include "farewell.h"
+#include "journal.h"
 
 static sim_report_t s_rep;
 
@@ -176,6 +177,127 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out)
 }
 
 const sim_report_t *sim_last_report(void) { return &s_rep; }
+
+/* --- clock correction, the opposite of a catch-up ------------------------
+ * See sim.h for why this lives here. The list below is the COMPLETE set of
+ * RTC-anchored state in the project; anything added later that stores an
+ * absolute clock reading has to join it, or a correction will silently break
+ * whatever duration it measures.
+ *
+ * Deliberately NOT rebased:
+ *
+ *   visitrec[].arrived_ts / departed_ts - sealed history of PREVIOUS
+ *     Visitors. Nothing renders them as a date; the record's own `days` is a
+ *     stored duration, so a correction cannot distort it. Shifting archived
+ *     visits by today's delta would be guessing which clock each of them was
+ *     written under.
+ *
+ *   every millis()-based timer - bubble cooldowns, the mischief settle, the
+ *     urgency clock, the farewell hint gap. They measure uptime, not wall
+ *     time, and the RTC changing does not touch them. */
+void sim_clock_corrected(uint32_t old_now, uint32_t new_now)
+{
+    if (!old_now || !new_now || old_now == new_now) return;
+
+    const int64_t d64 = (int64_t)new_now - (int64_t)old_now;
+    const int32_t d   = (int32_t)d64;
+    pet_state_t *p = pet_mutable();
+
+    const float age_before = pet_age_days();
+
+    /* 1. THE AGE BASELINE. The whole bug in one line: age is derived as
+     *    (now - hatch_ts), so moving `now` without moving hatch_ts ages the
+     *    Visitor by the size of the correction. */
+    p->hatch_ts = rtc_shift_ts(p->hatch_ts, d);
+
+    /* 2. THE HATCH COUNTDOWN, if one is running. It is an absolute deadline,
+     *    so a +5 day correction mid-countdown would hatch the egg instantly
+     *    and a backward one would strand it for five days. */
+    p->egg_hatch_ts = rtc_shift_ts(p->egg_hatch_ts, d);
+
+    /* 3. THE ARMED DEPARTURE. depart_due_ts exists to measure how long a
+     *    farewell has been waiting to be witnessed against a 48 h cap. Left
+     *    alone, a forward correction would blow straight through the cap and
+     *    a backward one would underflow the unsigned subtraction. */
+    p->depart_due_ts = rtc_shift_ts(p->depart_due_ts, d);
+
+    /* 4. THE DATED MILESTONES and 5. THE REPEAT-PLAY STREAK - both are the
+     *    same kind of absolute reading, and both live outside pet_state_t. */
+    journal_shift_ts(d);
+    gamerec_shift_ts(d);
+
+    /* 6. THE SIMULATION BASELINE, set to the new reading OUTRIGHT rather
+     *    than shifted.
+     *
+     *    This is the line that stops the fake offline day. last_sim_ts is
+     *    what the next boot's sim_catch_up() measures an absence from, so if
+     *    it kept the old clock's value while the RTC held the new one, the
+     *    correction itself would be replayed as elapsed gameplay - five days
+     *    of hunger, cleanliness, bathroom and departure evaluation that
+     *    never happened. Assigning rather than shifting also mops up the
+     *    sub-second residue between care_tick()'s last write and now, and
+     *    stays correct if it was somehow stale.
+     *
+     *    The simulation genuinely IS up to date to this instant: the live
+     *    tick has been running throughout, on millis(), which the RTC write
+     *    did not touch. */
+    p->last_sim_ts = new_now;
+
+    /* days_alive_max, the monotonic floor that stops a clock correction ever
+     * aging a Visitor BACKWARDS, needs nothing here - and that is worth
+     * saying rather than leaving as an absence. It is only a problem when a
+     * correction changes the age, and the point of everything above is that
+     * the age does not change: hatch_ts moved by exactly the same delta as
+     * `now`, so floor(age) is what it already was and the floor is already
+     * consistent with it. The refresh just re-derives the cache. */
+    pet_refresh_age();
+
+    const float age_after = pet_age_days();
+    char ob[40], nb[40];
+    rtc_format_friendly(old_now, ob, sizeof(ob));
+    rtc_format_friendly(new_now, nb, sizeof(nb));
+    Serial.println();
+    Serial.println("=== CLOCK CORRECTION ======================================");
+    Serial.printf("  was            : %s\n", ob);
+    Serial.printf("  now            : %s\n", nb);
+    Serial.printf("  delta          : %+ld s  (%+.2f days)\n",
+                  (long)d, (double)d / 86400.0);
+    Serial.printf("  age            : %.4f -> %.4f days  (PRESERVED)\n",
+                  (double)age_before, (double)age_after);
+    Serial.printf("  rebased        : hatch_ts %lu, last_sim_ts %lu, "
+                  "egg_hatch_ts %lu, depart_due_ts %lu\n",
+                  (unsigned long)p->hatch_ts, (unsigned long)p->last_sim_ts,
+                  (unsigned long)p->egg_hatch_ts,
+                  (unsigned long)p->depart_due_ts);
+    Serial.println("  NOT simulated  : no catch-up, no needs advanced, no "
+                   "offline events");
+    Serial.println("-----------------------------------------------------------");
+}
+
+void sim_clock_first_trusted(uint32_t now)
+{
+    if (!now) return;
+    pet_state_t *p = pet_mutable();
+
+    /* NO hatch_ts IS ESTABLISHED HERE, and that is the fix.
+     *
+     * This used to read `if (!p->hatch_ts) { p->hatch_ts = now;
+     * pet_apply_stage_for_day(0); }`, which did two wrong things to an egg
+     * that was still on the selector screen: it gave an unhatched Visitor an
+     * age baseline, and - because STAGE_EGG is 0, STAGE_BABY is 1 and day 0
+     * means Baby - pet_apply_stage_for_day(0) then promoted the egg straight
+     * to a Baby, skipping the countdown, the colour and gender resolution,
+     * the reveal, the first words, the journal entry and the hatch chime.
+     * Simply setting the clock hatched the egg.
+     *
+     * The hatch owns hatch_ts. Nothing else may create one. */
+    p->last_sim_ts = now;
+    pet_refresh_age();
+    Serial.printf("CLOCK: first trusted reading - simulation anchored to %lu, "
+                  "%s\n", (unsigned long)now,
+                  p->hatch_ts ? "existing age baseline kept"
+                              : "no Visitor hatched yet (age baseline waits for START)");
+}
 
 /* ONE greeting, highest priority first - never a stack. Tone stays funny and
  * kid-friendly: a child who left the device in a drawer for a week should

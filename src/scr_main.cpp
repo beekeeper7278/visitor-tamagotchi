@@ -21,6 +21,9 @@
 #include "ui_bubble.h"
 #include "discipline.h"
 #include "dialogue.h"
+#include "settings.h"
+#include "setclock.h"
+#include "sim.h"
 
 /* THE SELECTOR SPACING, PROVEN AT BUILD TIME.
  *
@@ -29,14 +32,23 @@
  * only checked by eye get broken by the next layout change, so the two gaps
  * the specification names are asserted here instead. Both must stay at or
  * above 20 px, and the whole picker must fit the panel. */
+static_assert(EGG_DATE_GAP_ABOVE >= 4,
+              "the Date & Time card overlaps the egg shell");
+static_assert(EGG_SW_GAP_ABOVE >= 20,
+              "colour row must clear the Date & Time card by at least 20 px");
 static_assert(EGG_GENDER_GAP_ABOVE >= 20,
-              "gender row must clear the colour rows by at least 20 px");
+              "gender row must clear the colour row by at least 20 px");
 static_assert(EGG_START_DEAD_BAND >= 20,
               "START must be at least 20 px clear of every selector hitbox");
 static_assert(EGG_START_Y + EGG_START_H <= BSP_LCD_H,
               "START runs off the bottom of the panel");
-static_assert(4 * EGG_SW_W + 3 * EGG_SW_GAP_X <= BSP_LCD_W,
+static_assert((EGG_PALETTE_COUNT + 1) * EGG_SW_W +
+              EGG_PALETTE_COUNT * EGG_SW_GAP_X <= BSP_LCD_W,
               "the colour row is wider than the panel");
+static_assert(EGG_SW_W >= 44 && EGG_SW_H >= 44,
+              "a colour swatch is below the minimum touch target");
+static_assert(EGG_DATE_W >= 240 && EGG_DATE_H >= 48,
+              "the Date & Time card is not a large child-friendly control");
 static_assert(3 * EGG_GENDER_W + 2 * EGG_GENDER_GAP_X <= BSP_LCD_W,
               "the gender row is wider than the panel");
 
@@ -63,7 +75,8 @@ static lv_obj_t *s_pet_layer;
 static lv_obj_t *s_pet_overlay;
 static lv_obj_t *s_hud_mood;
 static lv_obj_t *s_btn_menu;
-static lv_obj_t *s_egg_btn, *s_egg_lbl;
+static lv_obj_t *s_egg_btn, *s_egg_lbl, *s_egg_btn_lbl;
+static lv_obj_t *s_date_btn, *s_date_val;
 static lv_obj_t *s_dim, *s_zlayer;
 static lv_obj_t *s_swatch[EGG_PALETTE_COUNT + 1];
 static lv_obj_t *s_gender_btn[3];
@@ -93,6 +106,30 @@ static void menu_btn_cb(lv_event_t *e) { (void)e; menu_open(); }
 static const uint32_t SWATCH[EGG_PALETTE_COUNT] = {
     0xE04A4A, 0x9B6BD8, 0x5A9BE8, 0x5FBF6B, 0x4FC3B0, 0xF2C14E
 };
+
+/* --- THE CLOCK GATE ------------------------------------------------------
+ * A new Visitor may not hatch against a clock nobody has confirmed.
+ *
+ * rtc_trusted() alone is not enough and that IS the bug this closes: it
+ * means "the oscillator is running and the reading is inside a plausible
+ * window", which a stale development date satisfies perfectly. A Visitor
+ * hatched against one takes its age baseline from a wrong clock, and the
+ * parent correcting the date afterwards then reads as days of real elapsed
+ * life - instant aging, instant evolution, a week of neglect it never had.
+ *
+ * BOTH conditions, therefore: the hardware has to be trustworthy AND a human
+ * has to have set it and had the write verified. See settings.h. */
+bool scr_main_clock_ready(void)
+{
+    return rtc_trusted() && settings_clock_confirmed();
+}
+
+static void date_cb(lv_event_t *e)
+{
+    (void)e;
+    if (menu_swipe_active()) return;
+    setclock_open();
+}
 
 static void egg_pick_cb(lv_event_t *e)
 {
@@ -135,6 +172,15 @@ void scr_main_egg_start(uint32_t secs)
     pet_state_t *p = pet_mutable();
     if (p->stage != STAGE_EGG || p->egg_hatch_ts) return;
 
+    /* The gate again, here rather than only in the button handler, because
+     * the console test hook (`:`) calls straight into this. A test path that
+     * can produce a Visitor the product cannot is not a test of the product. */
+    if (!scr_main_clock_ready()) {
+        Serial.println("EGG: START refused - the date and time must be set "
+                       "and verified before a Visitor can hatch");
+        return;
+    }
+
     /* BOTH surprises resolve ONCE, here, and are persisted immediately - so a
      * power cut during the five-minute hatch brings back the same egg and the
      * same Visitor rather than rerolling either. Nothing downstream ever
@@ -152,8 +198,30 @@ void scr_main_egg_start(uint32_t secs)
         p->gender = p->gender_choice;
     }
 
-    const uint32_t now = rtc_trusted() ? rtc_now() : (millis() / 1000);
+    /* THE BASELINE IS ESTABLISHED HERE, FROM THE NOW-CONFIRMED CLOCK.
+     *
+     * scr_main_clock_ready() has just guaranteed a trusted, human-verified
+     * reading, so this is no longer the `rtc_trusted() ? rtc_now() :
+     * millis()/1000` fallback it used to be - a countdown anchored to
+     * milliseconds-since-boot cannot survive a power cut, and the whole
+     * point of persisting egg_hatch_ts is that it does.
+     *
+     * last_sim_ts is set from the same reading. It is the simulation
+     * baseline, and it must start at the moment the player commits rather
+     * than carry whatever the old, wrong clock left behind - otherwise the
+     * first boot after the hatch would reconstruct an "absence" measured
+     * between two different clocks.
+     *
+     * hatch_ts is deliberately NOT set here. It is the moment the Visitor
+     * ARRIVES, and it is stamped in egg_hatch() so that a newly hatched
+     * Visitor is exactly age 0 rather than five minutes old. */
+    const uint32_t now = rtc_now();
     p->egg_hatch_ts = now + secs;
+    p->last_sim_ts  = now;
+    char nb[40];
+    rtc_format_friendly(now, nb, sizeof(nb));
+    Serial.printf("EGG: START pressed against a verified clock (%s) - "
+                  "simulation baseline set\n", nb);
     /* force: the resolved identity must be on flash BEFORE the timer is
      * allowed to run, not at the next periodic save. */
     persist_save(true);
@@ -168,6 +236,21 @@ static void egg_start_cb(lv_event_t *e)
 {
     (void)e;
     if (menu_swipe_active()) return;
+
+    /* START IS UNAVAILABLE UNTIL THE CLOCK IS SET AND VERIFIED.
+     *
+     * It is drawn dead as well - see scr_main_egg_refresh() - so this is the
+     * belt to that braces. A press on a dead START opens the setter rather
+     * than doing nothing: the one thing that has to happen next is the one
+     * thing the press now leads to, and the setter has a Cancel. A control
+     * that visibly refuses and then offers no route forward is how a parent
+     * concludes the device is broken. */
+    if (!scr_main_clock_ready()) {
+        Serial.println("EGG: START refused - the date and time have not been "
+                       "set and verified; opening the setter");
+        setclock_open();
+        return;
+    }
     scr_main_egg_start(EGG_HATCH_SEC);
 }
 
@@ -188,6 +271,12 @@ static void egg_hatch(void)
     p->form_id      = FORM_BABY;
     p->egg_hatch_ts = 0;
     p->days_alive   = 0;
+    /* AGE 0 MEANS AGE 0. days_alive_max is a monotonic floor that
+     * pet_refresh_age() clamps days_alive UP to, so leaving a previous
+     * Visitor's high-water mark in place would show a newborn as however old
+     * its predecessor got. pet_init() zeroes both, but the hatch is the
+     * moment that has to be able to state it on its own. */
+    p->days_alive_max = 0;
     p->stage_start_day = 0;
 
     /* Belt and braces: if this egg somehow reached the hatch without going
@@ -203,7 +292,23 @@ static void egg_hatch(void)
     p->care_fed    = EGG_HATCH_HUNGER;
     p->care_clean  = EGG_HATCH_CLEANLINESS;
 
-    if (rtc_trusted()) { p->hatch_ts = rtc_now(); p->last_sim_ts = p->hatch_ts; }
+    /* THE AGE BASELINE, taken here and nowhere else, from the clock a human
+     * confirmed before START was ever available. Age is derived as
+     * (now - hatch_ts), so stamping it at the instant of arrival is what
+     * makes "a newly hatched Visitor starts at age 0" true by construction
+     * rather than by a reset that something else could undo.
+     *
+     * The countdown cannot start without a verified clock, so the guard is
+     * for the case where the RTC failed DURING the five minutes. A Visitor
+     * with no hatch_ts does not age at all, which is the right answer to a
+     * clock that has just stopped being trustworthy. */
+    if (rtc_trusted()) {
+        p->hatch_ts    = rtc_now();
+        p->last_sim_ts = p->hatch_ts;
+    } else {
+        Serial.println("EGG: hatched with an UNTRUSTED clock - no age baseline; "
+                       "aging stays paused until the date is set again");
+    }
     care_reset();                       /* no messes to greet it */
     journal_add(JM_HATCHED, 0, 0);
     pet_record_form();                  /* "How I grew up" starts HERE */
@@ -278,6 +383,23 @@ void scr_main_egg_refresh(void)
     const bool choosing = is_egg && !p->egg_hatch_ts;
     if (s_egg_btn) show_obj(s_egg_btn, choosing);
     if (s_egg_lbl) show_obj(s_egg_lbl, is_egg);
+
+    /* STEP 1 of the pre-hatch flow: the clock, and what it currently says.
+     * Both live on the card, so "what is it set to" and "change it" are one
+     * control rather than a readout a parent has to go looking for. */
+    if (s_date_btn) show_obj(s_date_btn, choosing);
+    if (choosing && s_date_val) {
+        const bool ready = scr_main_clock_ready();
+        char b[40];
+        if (rtc_trusted()) rtc_format_friendly(rtc_now(), b, sizeof(b));
+        else               snprintf(b, sizeof(b), "not set yet");
+        lv_label_set_text(s_date_val, b);
+        /* Amber until it is done, blue once it is - the same blue the
+         * Settings page uses for the same control, so it reads as the same
+         * thing in both places. */
+        lv_obj_set_style_bg_color(s_date_btn,
+            lv_color_hex(ready ? 0x7FA8E8 : 0xF2C14E), 0);
+    }
     for (uint8_t i = 0; i <= EGG_PALETTE_COUNT; i++) {
         if (!s_swatch[i]) continue;
         show_obj(s_swatch[i], choosing);
@@ -295,9 +417,24 @@ void scr_main_egg_refresh(void)
 
     if (!p->egg_hatch_ts) {
         /* Still choosing: the egg is high and the label belongs in the HUD
-         * row, because everything from 156 down is selectors. */
+         * row, because everything from 154 down is the four steps. */
+        const bool ready = scr_main_clock_ready();
         lv_obj_align(s_egg_lbl, LV_ALIGN_TOP_MID, 0, 4);
-        lv_label_set_text(s_egg_lbl, "Pick a colour and boy or girl, then START");
+        lv_label_set_text(s_egg_lbl,
+            ready ? "Pick a colour and boy or girl, then START"
+                  : "First, set today's date and time");
+
+        /* START IS DRAWN DEAD while the clock is unconfirmed. It stays on
+         * screen rather than disappearing: a control that vanishes reads as
+         * a bug, one that is visibly greyed reads as "not yet", and the
+         * label above says what to do about it. */
+        if (s_egg_btn)
+            lv_obj_set_style_bg_color(s_egg_btn,
+                lv_color_hex(ready ? 0x60D0A0 : 0x232630), 0);
+        if (s_egg_btn_lbl)
+            lv_obj_set_style_text_color(s_egg_btn_lbl,
+                lv_color_hex(ready ? 0x101018 : 0x5E6470), 0);
+
         ui_pet_set_egg_progress(0.0f);
         return;
     }
@@ -309,7 +446,17 @@ void scr_main_egg_refresh(void)
     ui_pet_egg_drop(false);
     lv_obj_align(s_egg_lbl, LV_ALIGN_TOP_MID, 0, EGG_HATCH_LBL_Y);
 
-    const uint32_t now = rtc_trusted() ? rtc_now() : (millis() / 1000);
+    /* The countdown deadline is an RTC reading (scr_main_egg_start() cannot
+     * run without a verified clock), so it must be compared against the RTC.
+     * The old `millis()/1000` fallback compared an absolute date to seconds
+     * since boot, which is only ever true or only ever false. If the clock
+     * has failed mid-hatch there is nothing sound to compare against, so the
+     * countdown simply holds until it is set again. */
+    if (!rtc_trusted()) {
+        lv_label_set_text(s_egg_lbl, "Waiting for the clock...");
+        return;
+    }
+    const uint32_t now = rtc_now();
     if (now >= p->egg_hatch_ts) { egg_hatch(); return; }
 
     const uint32_t left = p->egg_hatch_ts - now;
@@ -497,55 +644,93 @@ void scr_main_create(void)
     lv_obj_align(s_egg_lbl, LV_ALIGN_TOP_MID, 0, 4);
     lv_obj_add_flag(s_egg_lbl, LV_OBJ_FLAG_HIDDEN);
 
-    /* Colour swatches: six colours plus Surprise, as big coloured buttons
-     * rather than a text list. Four on the top row, three centred beneath.
-     * Every position comes from the EGG_* constants, whose derivation and
-     * dead-band arithmetic are written out in config.h - so the spacing can
-     * be checked by reading the numbers rather than by looking at the panel. */
-    for (uint8_t i = 0; i <= EGG_PALETTE_COUNT; i++) {
-        const bool row1 = (i >= 4);
-        const uint8_t n_in_row = row1 ? 3 : 4;
-        const lv_coord_t row_w = n_in_row * EGG_SW_W + (n_in_row - 1) * EGG_SW_GAP_X;
-        const lv_coord_t x0 = (BSP_LCD_W - row_w) / 2;
-        const lv_coord_t col = row1 ? (i - 4) : i;
+    /* STEP 1: SET DATE & TIME. A single large card carrying BOTH halves of
+     * the job - the instruction on the top line, what the clock currently
+     * says on the second. A parent should never have to go and look
+     * somewhere else to find out whether the date is right, and a child
+     * should see one obvious thing to hand to a grown-up.
+     *
+     * The whole 320x56 card is the touch target, not the text inside it. */
+    s_date_btn = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(s_date_btn);
+    lv_obj_set_size(s_date_btn, EGG_DATE_W, EGG_DATE_H);
+    lv_obj_set_pos(s_date_btn, EGG_DATE_X, EGG_DATE_Y);
+    lv_obj_set_style_radius(s_date_btn, 14, 0);
+    lv_obj_set_style_bg_color(s_date_btn, lv_color_hex(0xF2C14E), 0);
+    lv_obj_set_style_bg_opa(s_date_btn, LV_OPA_COVER, 0);
+    lv_obj_add_flag(s_date_btn, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s_date_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(s_date_btn, date_cb, LV_EVENT_CLICKED, NULL);
+    {
+        lv_obj_t *dt = lv_label_create(s_date_btn);
+        lv_label_set_text(dt, "SET DATE & TIME");
+        lv_obj_set_style_text_font(dt, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(dt, lv_color_hex(0x101018), 0);
+        lv_obj_align(dt, LV_ALIGN_TOP_MID, 0, 5);
 
-        lv_obj_t *sw = lv_obj_create(s_scr);
-        lv_obj_remove_style_all(sw);
-        lv_obj_set_size(sw, EGG_SW_W, EGG_SW_H);
-        lv_obj_set_pos(sw, x0 + col * (EGG_SW_W + EGG_SW_GAP_X),
-                       row1 ? EGG_SW_ROW1_Y : EGG_SW_ROW0_Y);
-        lv_obj_set_style_radius(sw, 12, 0);
-        lv_obj_set_style_bg_color(sw,
-            lv_color_hex(i < EGG_PALETTE_COUNT ? SWATCH[i] : 0x2A2A34), 0);
-        lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(sw, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_border_width(sw, 5, 0);   /* thick ring when chosen */
-        lv_obj_set_style_border_opa(sw, LV_OPA_TRANSP, 0);
-        lv_obj_add_flag(sw, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(sw, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_event_cb(sw, egg_pick_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-
-        if (i == EGG_PALETTE_COUNT) {
-            /* SURPRISE is drawn as the six colours themselves - stripes, not
-             * a question mark. "?" read as "no colour"; six stripes read as
-             * "it could be any of these", which is what it means. */
-            const lv_coord_t bw = (EGG_SW_W - 12) / EGG_PALETTE_COUNT;
-            for (uint8_t k = 0; k < EGG_PALETTE_COUNT; k++) {
-                lv_obj_t *st = lv_obj_create(sw);
-                lv_obj_remove_style_all(st);
-                lv_obj_set_size(st, bw, EGG_SW_H - 22);
-                lv_obj_set_pos(st, 6 + k * bw, 11);
-                lv_obj_set_style_radius(st, 2, 0);
-                lv_obj_set_style_bg_color(st, lv_color_hex(SWATCH[k]), 0);
-                lv_obj_set_style_bg_opa(st, LV_OPA_COVER, 0);
-                lv_obj_clear_flag(st, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-            }
-        }
-        s_swatch[i] = sw;
+        s_date_val = lv_label_create(s_date_btn);
+        lv_label_set_text(s_date_val, "not set yet");
+        lv_obj_set_style_text_color(s_date_val, lv_color_hex(0x101018), 0);
+        lv_obj_align(s_date_val, LV_ALIGN_BOTTOM_MID, 0, -6);
     }
 
-    /* Gender: Boy / Girl / Surprise. Same size class as the colours, its own
-     * row, EGG_GENDER_GAP_ABOVE clear of them. Identity only - nothing this
+    /* STEP 2: colour. Six colours plus Surprise, in ONE row of seven - see
+     * config.h for what that row had to give up to make room for the card
+     * above it, and why the colours were the right place to take it from.
+     * Every position comes from the EGG_* constants, whose derivation and
+     * dead-band arithmetic are written out there, so the spacing can be
+     * checked by reading the numbers rather than by looking at the panel. */
+    {
+        const uint8_t n = EGG_PALETTE_COUNT + 1;
+        const lv_coord_t row_w = n * EGG_SW_W + (n - 1) * EGG_SW_GAP_X;
+        const lv_coord_t x0 = (BSP_LCD_W - row_w) / 2;
+
+        for (uint8_t i = 0; i < n; i++) {
+            lv_obj_t *sw = lv_obj_create(s_scr);
+            lv_obj_remove_style_all(sw);
+            lv_obj_set_size(sw, EGG_SW_W, EGG_SW_H);
+            lv_obj_set_pos(sw, x0 + i * (EGG_SW_W + EGG_SW_GAP_X), EGG_SW_ROW_Y);
+            lv_obj_set_style_radius(sw, 12, 0);
+            lv_obj_set_style_bg_color(sw,
+                lv_color_hex(i < EGG_PALETTE_COUNT ? SWATCH[i] : 0x2A2A34), 0);
+            lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_color(sw, lv_color_hex(0xFFFFFF), 0);
+            /* 4 rather than 5: the swatch is narrower now, and a 5 px ring on
+             * each side ate enough of a 46 px block to make the colour itself
+             * hard to read at a glance. */
+            lv_obj_set_style_border_width(sw, 4, 0);   /* thick ring when chosen */
+            lv_obj_set_style_border_opa(sw, LV_OPA_TRANSP, 0);
+            lv_obj_add_flag(sw, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(sw, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_event_cb(sw, egg_pick_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+
+            if (i == EGG_PALETTE_COUNT) {
+                /* SURPRISE is drawn as the six colours themselves - stripes,
+                 * not a question mark. "?" read as "no colour"; six stripes
+                 * read as "it could be any of these", which is what it means.
+                 * Centred from the measured block width rather than from a
+                 * fixed 6 px inset, which no longer centres at this size. */
+                const lv_coord_t bw = (EGG_SW_W - 12) / EGG_PALETTE_COUNT;
+                const lv_coord_t sh = EGG_SW_H - 22;
+                const lv_coord_t sx = (EGG_SW_W - bw * EGG_PALETTE_COUNT) / 2;
+                const lv_coord_t sy = (EGG_SW_H - sh) / 2;
+                for (uint8_t k = 0; k < EGG_PALETTE_COUNT; k++) {
+                    lv_obj_t *st = lv_obj_create(sw);
+                    lv_obj_remove_style_all(st);
+                    lv_obj_set_size(st, bw, sh);
+                    lv_obj_set_pos(st, sx + k * bw, sy);
+                    lv_obj_set_style_radius(st, 2, 0);
+                    lv_obj_set_style_bg_color(st, lv_color_hex(SWATCH[k]), 0);
+                    lv_obj_set_style_bg_opa(st, LV_OPA_COVER, 0);
+                    lv_obj_clear_flag(st, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+                }
+            }
+            s_swatch[i] = sw;
+        }
+    }
+
+    /* STEP 3: Boy / Girl / Surprise. Its own row, EGG_GENDER_GAP_ABOVE clear
+     * of the colours. Identity only - nothing this
      * row sets ever reaches gameplay, evolution or care difficulty. */
     {
         static const char *GNAME[3] = { "Boy", "Girl", "Surprise" };
@@ -578,7 +763,8 @@ void scr_main_create(void)
         }
     }
 
-    /* A big, unmissable START, EGG_START_DEAD_BAND clear of the gender row.
+    /* STEP 4: a big, unmissable START, EGG_START_DEAD_BAND clear of the
+     * gender row - and DEAD until the clock has been set and verified.
      * The gap matters AND the press-target rule matters: LVGL delivers
      * CLICKED to the object the press began on, so a touch that starts on a
      * selector and drifts down cannot fire START even at the boundary. */
@@ -596,6 +782,7 @@ void scr_main_create(void)
     lv_obj_set_style_text_font(el, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(el, lv_color_hex(0x101018), 0);
     lv_obj_center(el);
+    s_egg_btn_lbl = el;   /* recoloured with the gate; see scr_main_egg_refresh() */
 
     /* The identity reveal. A banner rather than a speech bubble on purpose:
      * bubbles are preemptible, cooldown-gated and anchored to a Visitor that

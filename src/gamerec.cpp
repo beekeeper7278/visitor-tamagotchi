@@ -6,6 +6,7 @@
 
 #include "config.h"
 #include "storage.h"
+#include "rtc.h"
 #include "gamerec.h"
 
 #define GAMEREC_NS   "visitorg"
@@ -142,6 +143,13 @@ void gamerec_on_stage_change(uint8_t new_stage)
     gamerec_save();
     Serial.printf("GAMEREC: best results reset for the new stage (%u) - "
                   "play history kept\n", new_stage);
+}
+
+void gamerec_shift_ts(int32_t delta)
+{
+    if (!delta || !s_rec.last_play_ts) return;
+    s_rec.last_play_ts = rtc_shift_ts(s_rec.last_play_ts, delta);
+    gamerec_save();
 }
 
 void gamerec_reset(void) { defaults(&s_rec); gamerec_save(); }

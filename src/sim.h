@@ -80,6 +80,36 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out);
 const sim_report_t *sim_last_report(void);
 void  sim_print_report(void);
 
+/* --- A USER-INITIATED CLOCK CORRECTION IS NOT ELAPSED TIME ---------------
+ * These two live here, beside sim_catch_up(), because the whole point of
+ * them is that they are its OPPOSITE and the distinction is the bug.
+ *
+ * sim_catch_up() answers "the clock moved forward while we were not looking,
+ * so that much life happened". A parent fixing a wrong date is the other
+ * thing entirely: the clock moved and NOTHING happened. Running one where
+ * the other belongs is what made a three-hour-old Visitor five days old,
+ * evolve twice, arrive to a week of hunger and start packing to leave.
+ *
+ * The repair is a REBASE, not a replay. Every timestamp this project stores
+ * is an absolute reading of the clock that has just been found wrong, so all
+ * of them move together by the same delta and every DURATION between them -
+ * age, the hatch countdown, how long a departure has been held, the
+ * repeat-play window - comes out unchanged. Nothing is simulated, no journal
+ * entry is written, no need is advanced.
+ *
+ *   sim_clock_corrected()     the clock was trusted before AND after: there
+ *                             is a real delta, so rebase by it.
+ *   sim_clock_first_trusted() there was no usable "before" (an unset or
+ *                             implausible RTC), so there is no delta to
+ *                             rebase by. Anchor the simulation to now so the
+ *                             unmeasurable gap is never charged to anyone.
+ *
+ * Both are for a HUMAN setting the clock. The `%` `.` `,` time-travel
+ * diagnostics deliberately do the opposite - they move hatch_ts and leave
+ * the clock alone - and are unchanged. */
+void sim_clock_corrected(uint32_t old_now, uint32_t new_now);
+void sim_clock_first_trusted(uint32_t now);
+
 /* The single highest-priority return line, never a stack of greetings. */
 const char *sim_return_greeting(const sim_report_t *r);
 

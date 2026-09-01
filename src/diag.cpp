@@ -912,25 +912,50 @@ static void diag_page_sweep(void)
 
 /* Set the clock to a fixed, plausible moment so the RTC path - including the
  * OS-flag clear - is exercisable without a date picker existing yet. */
+/* --- SETTING THE CLOCK FROM THE CONSOLE ---------------------------------
+ * These are clock SETTERS, not time-travel tools, and the distinction now
+ * matters. `%` `.` `,` move hatch_ts and leave the RTC alone - that is time
+ * travel, it is deliberately the opposite of this, and it is unchanged.
+ * These move the RTC, which is what a parent does on the Settings page, so
+ * they go through exactly the same correction path the touch UI uses:
+ * capture the old reading, write, then REBASE rather than let the jump be
+ * replayed as elapsed gameplay.
+ *
+ * Without that, `N` `G` `A` - which exist to exercise the sleep window -
+ * silently aged or de-aged the live Visitor by however far the clock moved,
+ * so a test of bedtime was also an untracked test of the age clock. */
+static void diag_clock_write(const rtc_time_t *t, const char *what)
+{
+    const uint32_t before = rtc_trusted() ? rtc_now() : 0;
+    if (!rtc_set(t)) { Serial.println("clock set FAILED"); return; }
+    const uint32_t after = rtc_now();
+    if (!after) { Serial.println("clock set FAILED - no trusted reading back"); return; }
+
+    if (before) sim_clock_corrected(before, after);
+    else        sim_clock_first_trusted(after);
+
+    /* The console stands in for the parent, so it confirms the clock the same
+     * way the parent does - otherwise the pre-hatch START gate could never be
+     * exercised from here. */
+    settings_set_clock_confirmed(after);
+
+    char b[32]; rtc_format(after, b, sizeof(b));
+    Serial.printf("CLOCK -> %s (%s), stage %s, age %.4f days\n",
+                  b, what, pet_stage_name(pet_get()->stage),
+                  (double)pet_age_days());
+    persist_save(true);
+}
+
 static void diag_rtc_set_demo(void)
 {
-    rtc_time_t t = { 2026, 8, 28, 19, 30, 0 };
-    Serial.println("RTC set -> 2026-08-28 19:30:00");
-    if (!rtc_set(&t)) return;
-    char b[32]; rtc_format(rtc_now(), b, sizeof(b));
-    Serial.printf("RTC now: %s   health: %s\n", b, rtc_health_name(rtc_health()));
-
-    /* Same baseline logic as the on-screen setter, so serial testing
-     * exercises the real path rather than a shortcut. */
-    pet_state_t *p = pet_mutable();
-    if (!p->hatch_ts) {
-        p->hatch_ts = rtc_now();
-        p->days_alive = 0;
-        pet_apply_stage_for_day(0);
-        Serial.println("hatch baseline established, age 0");
-    }
-    p->last_sim_ts = rtc_now();
-    persist_save(true);
+    /* The BUILD stamp, not a hardcoded date. A fixed date compiled into the
+     * firmware is precisely how an RTC ends up plausible and wrong. */
+    rtc_time_t t;
+    rtc_build_stamp(&t);
+    Serial.printf("RTC set -> the firmware build stamp (%04u-%02u-%02u %02u:%02u)\n",
+                  (unsigned)t.year, (unsigned)t.month, (unsigned)t.day,
+                  (unsigned)t.hour, (unsigned)t.min);
+    diag_clock_write(&t, "build stamp");
 }
 
 /* Simulate having been switched off for N hours, using the REAL catch-up
@@ -992,25 +1017,53 @@ static void diag_persist_fidelity(void)
 }
 
 /* Jump the clock to a specific hour so the sleep window can be exercised on
- * demand instead of waiting until 8 pm. Establishes the hatch baseline if it
- * is missing, so the Visitor is a Baby rather than an Egg - naps are a Baby
- * behaviour and an Egg would not show them. */
+ * demand instead of waiting until 8 pm.
+ *
+ * It no longer establishes a hatch baseline, and must not: an Egg has no age
+ * because it has not arrived yet, and inventing one here would hatch it
+ * without the countdown, the identity resolution or the reveal. To get a
+ * Baby to nap, hatch one (`:`, then wait or press START on the screen). */
 static void diag_clock_to(uint8_t hour, uint8_t minute, const char *what)
 {
-    rtc_time_t t = { 2026, 8, 28, hour, minute, 0 };
-    if (!rtc_set(&t)) { Serial.println("clock set FAILED"); return; }
-
-    pet_state_t *p = pet_mutable();
-    if (!p->hatch_ts) {
-        p->hatch_ts = rtc_now();
-        p->days_alive = 0;
-        pet_apply_stage_for_day(0);
+    /* KEEP TODAY\'S DATE, change only the time of day. This used to force
+     * 2026-08-28 - a development date - so a command whose entire job is
+     * "make it bedtime" also silently threw the calendar back to whenever the
+     * file was written. Now it moves the hands, not the calendar, and the
+     * rebase in diag_clock_write() keeps the Visitor exactly as old as it was
+     * while the sleep window moves. */
+    rtc_time_t t;
+    if (rtc_trusted() && rtc_read(&t)) {
+        t.hour = hour; t.min = minute; t.sec = 0;
+    } else {
+        rtc_build_stamp(&t);
+        t.hour = hour; t.min = minute; t.sec = 0;
     }
-    p->last_sim_ts = rtc_now();
+    diag_clock_write(&t, what);
+}
 
-    char b[32]; rtc_format(rtc_now(), b, sizeof(b));
-    Serial.printf("CLOCK -> %s (%s), stage %s\n", b, what,
-                  pet_stage_name(p->stage));
+/* Move the wall clock by whole days THROUGH THE PRODUCTION CORRECTION PATH.
+ * This is the console form of a parent discovering the date is days out and
+ * fixing it, and it exists so the "age must be preserved" behaviour can be
+ * tested in one keypress instead of by hand-dialling six fields. It is NOT a
+ * time-travel tool: time travel moves hatch_ts, this moves the clock. */
+static void diag_clock_shift_days(int days)
+{
+    if (!rtc_trusted()) {
+        Serial.println("clock is not trusted - set it first (u, or the Settings page)");
+        return;
+    }
+    const uint32_t before = rtc_now();
+    const float age_before = pet_age_days();
+    rtc_time_t t;
+    rtc_from_unix(before + (uint32_t)((int32_t)days * 86400L), &t);
+    Serial.printf("\n(test) a parent discovers the clock is %+d days out and "
+                  "corrects it\n", -days);
+    diag_clock_write(&t, "console correction");
+    Serial.printf("(test) age %.4f -> %.4f days   %s\n",
+                  (double)age_before, (double)pet_age_days(),
+                  (pet_age_days() - age_before < 0.01f &&
+                   age_before - pet_age_days() < 0.01f) ? "PRESERVED - pass"
+                                                        : "CHANGED - FAIL");
 }
 
 /* Seed a care HISTORY rather than poking the visible meters: evolution reads
@@ -1128,6 +1181,41 @@ static void diag_time_travel(uint32_t hours)
     persist_mark_dirty("time travel");
 }
 
+/* Everything a clock-correction test needs to read, in one place: what the
+ * clock says, whether a human has confirmed it, and every anchor that a
+ * correction has to move. */
+static void diag_clock_report(void)
+{
+    const pet_state_t *p = pet_get();
+    char now_b[40], set_b[40], hatch_b[40];
+    rtc_format_friendly(rtc_now(), now_b, sizeof(now_b));
+    rtc_format_friendly(settings_clock_set_ts(), set_b, sizeof(set_b));
+    rtc_format_friendly(p->hatch_ts, hatch_b, sizeof(hatch_b));
+
+    Serial.println();
+    Serial.println("=== CLOCK + RTC ANCHORS ===================================");
+    Serial.printf("  health         : %s\n", rtc_health_name(rtc_health()));
+    Serial.printf("  now            : %s\n", now_b);
+    Serial.printf("  confirmed      : %s   (last set: %s)\n",
+                  settings_clock_confirmed() ? "YES, by a human, verified" : "NO",
+                  set_b);
+    Serial.printf("  START allowed  : %s\n",
+                  scr_main_clock_ready() ? "yes" : "NO - a new Visitor cannot hatch");
+    Serial.println("  --- anchors a correction rebases --------------------------");
+    Serial.printf("  hatch_ts       : %-11lu  %s\n", (unsigned long)p->hatch_ts, hatch_b);
+    Serial.printf("  last_sim_ts    : %-11lu  (the next boot measures its absence "
+                  "from here)\n", (unsigned long)p->last_sim_ts);
+    Serial.printf("  egg_hatch_ts   : %-11lu  %s\n", (unsigned long)p->egg_hatch_ts,
+                  p->egg_hatch_ts ? "(countdown running)" : "(no countdown)");
+    Serial.printf("  depart_due_ts  : %-11lu  %s\n", (unsigned long)p->depart_due_ts,
+                  p->depart_due_ts ? "(departure armed and waiting)" : "(not armed)");
+    Serial.printf("  age            : %.4f days  -> %s\n",
+                  (double)pet_age_days(), pet_stage_name(p->stage));
+    Serial.println("  journal dates and the game-streak stamp are rebased too");
+    Serial.println("  visit records are NOT - sealed history, and no date is shown");
+    Serial.println("-----------------------------------------------------------");
+}
+
 static void diag_age_report(void)
 {
     const pet_state_t *p = pet_get();
@@ -1135,6 +1223,8 @@ static void diag_age_report(void)
     Serial.println("=== AGE CLOCK =============================================");
     Serial.printf("  hatch_ts       : %lu\n", (unsigned long)p->hatch_ts);
     Serial.printf("  rtc trusted    : %s\n", rtc_trusted() ? "yes" : "NO -> age 0");
+    Serial.printf("  clock confirmed: %s\n",
+                  settings_clock_confirmed() ? "yes" : "NO - a new egg cannot START");
     Serial.printf("  pet_age_days() : %.4f  (fractional, derived from the clock)\n",
                   (double)pet_age_days());
     Serial.printf("  days_alive     : %u  (cache)   days_alive_max %u (monotonic)\n",
@@ -1251,6 +1341,10 @@ static void diag_phase10_menu(void)
     Serial.println("  motion: m report   c calibrate   g toggle gravity   n settings");
     Serial.println("          S arm motion history (then handle it, then TAB m)");
     Serial.println("  clock : R restore to 16:00 (awake band, after N/G/A)");
+    Serial.println("  CLOCK CORRECTION (moves the WALL CLOCK; age must NOT change)");
+    Serial.println("          >  correct the clock +5 days    <  -5 days");
+    Serial.println("          a  clock + age anchor report");
+    Serial.println("          (NOT time travel - `%` `.` `,` move hatch_ts instead)");
     Serial.println("  SAVE  : B backup the Visitor   U restore it   i backup info");
     Serial.println("          (own NVS namespace; survives X and the V { \" # fixtures)");
     const uint32_t t0 = millis();
@@ -1266,6 +1360,13 @@ static void diag_phase10_menu(void)
          * it back, which made them unusable on a device carrying a Visitor
          * somebody cares about. Wrap them: TAB B, run the fixture, TAB U,
          * then reboot with a full upload or a power cycle. */
+        /* --- CLOCK CORRECTION, the production path -----------------------
+         * These drive sim_clock_corrected() through exactly the code the
+         * Settings page uses, so what they prove is what a parent gets. The
+         * pass/fail line they print is the age before and after. */
+        case '>': diag_clock_shift_days(5);  break;
+        case '<': diag_clock_shift_days(-5); break;
+        case 'a': diag_clock_report();       break;
         case 'B': storage_backup();  break;
         case 'U': storage_restore(); break;
         case 'i': {
@@ -1697,7 +1798,7 @@ void diag_help(void)
     Serial.println("  R  care state report");
     Serial.println("  X  RESET the Visitor (newborn stats, clean room)");
     Serial.println("  --- Phase 5+6: clock, sleep, offline catch-up ---");
-    Serial.println("  c  set the RTC to a demo time (clears the OS flag)");
+    Serial.println("  c  set the RTC to the firmware build stamp (clears the OS flag)");
     Serial.println("  l  toggle Lights (affects sleep recovery)");
     Serial.println("  h  simulate 8 h away    H  simulate 72 h    j  simulate 8 days");
     Serial.println("  p  force a save now + write/skip counters");
@@ -1714,6 +1815,8 @@ void diag_help(void)
     Serial.println("  F  force next stage + evolution   O  arm offline evo reveal");
     Serial.println("  +  EXCELLENT care   =  MID care   &  GOOD care   _  POOR care");
     Serial.println("  ,  age +1h   .  age +6h   %  age +24h   *  age clock report");
+    Serial.println("     (those move hatch_ts. To move the WALL CLOCK and prove the age");
+    Serial.println("      survives it: TAB then > (+5d) / < (-5d) / a (anchor report))");
     Serial.println("  $  departure report + calibration   !  age pending departure 24h");
     Serial.println("  J  visit records report   @  jump to departure   ;  acknowledge");
     Serial.println("  :  START the egg (90s)   |  cycle colour   -  cycle gender");
