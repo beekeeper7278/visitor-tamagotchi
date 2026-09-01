@@ -44,6 +44,25 @@ void evolve_accumulate(float hours, bool asleep);
 
 evo_scores_t evolve_scores(void);
 
+/* --- AS OF A GIVEN DAY --------------------------------------------------
+ * The plain functions above evaluate against pet_age_days(), i.e. "now".
+ * That is right for the Journal, the explain dump and the farewell, and
+ * WRONG at a stage boundary reached during an offline catch-up: there, "now"
+ * is the end of the absence, not the day the boundary was crossed.
+ *
+ * evolve_stage_days() divides by (day - stage_start_day), so a Visitor that
+ * crossed into Kid on day 1 but was not switched on again until day 4 had
+ * its Baby stage measured as 4.5 days instead of 1.5 - diluting `engage` to
+ * a third of its true value and, measured over 8400 care histories, flipping
+ * the chosen form in 1% of them outright. Games actually played were being
+ * divided by time the Visitor had not yet lived.
+ *
+ * The boundary walks in sim_catch_up(), care_tick() and the time-travel
+ * diagnostic pass the BOUNDARY day here. Everything else keeps using "now". */
+evo_scores_t evolve_scores_on(float day);
+float        evolve_stage_days_on(float day);
+uint8_t      evolve_pick_form_on(uint8_t stage, float day);
+
 /* The per-stage rate denominator evolve_scores() divides by. Exposed so the
  * care-seeding test fixtures can invert it with the SAME expression rather
  * than a hand-copied one - they had already drifted apart, and a fixture that

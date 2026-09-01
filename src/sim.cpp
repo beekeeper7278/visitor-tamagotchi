@@ -94,13 +94,27 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out)
     pet_refresh_age();
     p->asleep = false;      /* you are here now, so it is awake */
 
-    /* Every stage boundary the absence crossed, in order. */
-    if (pet_apply_stage_for_day(pet_age_days()) > 0) {
+    /* Every stage boundary the absence crossed, ONE AT A TIME.
+     *
+     * This used to be `if (pet_apply_stage_for_day(...) > 0)`, which walked
+     * every boundary inside the condition and then did the per-boundary work
+     * exactly ONCE, for the final stage. An absence spanning Baby -> Kid ->
+     * Teen therefore never picked a Kid form at all: evo_path[] was left
+     * blank at Kid, and - worse - the teen selector's "was a Good Kid" +/-5
+     * bias read a form_id that was still FORM_BABY, so a Visitor cared for
+     * well while the device was off was structurally denied the bonus it had
+     * earned. Measured offline against the same care history crossing the
+     * same boundaries with the device on: the teen form differed in 39% of
+     * cases and evo_path[] in 100%. */
+    bool crossed_boundary = false;
+    while (pet_apply_one_stage(pet_age_days())) {
+        crossed_boundary = true;
         gamerec_on_stage_change(p->stage);   /* fresh bests for a new tier */
         /* Pick the form for the stage just ENTERED, from the history as it
          * stood. Never recomputed on a later boot: once chosen it is the
          * Visitor's actual past. */
-        const uint8_t f = evolve_pick_form(p->stage);
+        const uint8_t f = evolve_pick_form_on(p->stage,
+                                             (float)p->stage_day[p->stage]);
         if (f != p->form_id) {
             Serial.printf("EVOLVE: %s -> %s (stage %s)\n",
                           forms_name(p->form_id), forms_name(f),
@@ -115,8 +129,21 @@ void sim_catch_up(uint32_t from_ts, uint32_t to_ts, sim_report_t *out)
          * Visitor was missing from its own history. pet_record_form() knows
          * the slot mapping in one place. */
         pet_record_form();
-        evolve_on_stage_entered(p->stage, p->days_alive);
-    } else if (p->stage == STAGE_ADULT && pet_age_days() >= visit_recheck_day()) {
+        /* The day the stage was ENTERED, not the day the absence ended.
+         * p->days_alive is the end-of-absence day, so a Kid stage entered on
+         * day 1 during a jump to day 4 was given stage_start_day 4 - which
+         * makes evolve_stage_days() (and therefore `engage`, and therefore
+         * CS) wrong for the stage that was just decided. stage_day[] is
+         * written by pet_apply_one_stage() with the real boundary. */
+        evolve_on_stage_entered(p->stage, p->stage_day[p->stage]);
+    }
+    /* The mid-adult glow-up is the ELSE of the boundary walk: a tick that
+     * just crossed into Adult has already picked its form and must not
+     * immediately re-check it. `crossed_boundary` rather than
+     * s_rep.evolved, because a boundary can be crossed WITHOUT the form
+     * changing and that still counts as having just been decided. */
+    if (!crossed_boundary && p->stage == STAGE_ADULT &&
+        pet_age_days() >= visit_recheck_day()) {
         /* Was a hardcoded "day 18" - a fixed fraction of the old fixed 21-day
          * visit, and meaningless against a variable one. Now halfway through
          * whatever adult stretch this Visitor actually has. */

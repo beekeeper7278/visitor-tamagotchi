@@ -23,6 +23,7 @@
 #include "ui_pet.h"
 #include "ui_bubble.h"
 #include "evolve.h"
+#include "audio.h"
 
 int g_serial_quiet = 1;
 HostSerial Serial;
@@ -50,7 +51,11 @@ void ui_bubble_set_suppressed(bool b) { (void)b; }
 void ui_pet_set_wander(bool b) { (void)b; }
 void ui_pet_evolve_to(uint8_t f) { (void)f; }
 bool ui_bubble_say(bubble_tier_t t, const char *s) { (void)t;(void)s; return true; }
-void ui_pet_set_done_cb(pet_anim_done_cb_t cb) { (void)cb; }
+void ui_pet_add_done_cb(pet_anim_done_cb_t cb) { (void)cb; }
+/* Phase 10 gave evolve_present() a sound. Without this stub neither host
+ * harness links, which is how both silently stopped building at the
+ * phase10-feature-baseline tag. */
+void audio_play(snd_t s) { (void)s; }
 }
 
 /* --- a care regime: what the player actually does for a whole stage ------ */

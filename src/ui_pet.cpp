@@ -99,7 +99,21 @@ static lv_coord_t  s_pos_y     = PET_HOME_Y;
 static lv_coord_t  s_walk_from_y = PET_HOME_Y, s_walk_to_y = PET_HOME_Y;
 static uint32_t    s_wander_at  = 0;   /* next autonomous walk */
 static bool        s_wander_on  = true;
-static pet_anim_done_cb_t s_done_cb = nullptr;
+/* A small fixed set of observers - see ui_pet.h for why this is not one
+ * pointer. Two are registered today (care's bathroom, evolve's transform);
+ * four leaves room without putting an allocation on this path. */
+#define PET_DONE_CB_MAX 4
+static pet_anim_done_cb_t s_done_cb[PET_DONE_CB_MAX];
+static uint8_t            s_done_cb_n = 0;
+
+static void pet_fire_done(pet_anim_t a)
+{
+    /* Indexed rather than iterator-style: a callback may legitimately
+     * register another (evolve's does not today, but the bathroom one calls
+     * back into care), and the count is re-read each time. */
+    for (uint8_t i = 0; i < s_done_cb_n; i++)
+        if (s_done_cb[i]) s_done_cb[i](a);
+}
 /* bathroom sub-phases: 0 running out, 1 away, 2 running back */
 static uint8_t     s_bath_phase = 0;
 static lv_coord_t  s_bath_from  = 0, s_bath_exit = 0;
@@ -710,7 +724,16 @@ void ui_pet_play(pet_anim_t a)
 pet_anim_t ui_pet_current(void) { return s_anim; }
 
 void ui_pet_force_blink(void) { s_blink_t0 = millis(); }
-void ui_pet_set_done_cb(pet_anim_done_cb_t cb) { s_done_cb = cb; }
+void ui_pet_add_done_cb(pet_anim_done_cb_t cb)
+{
+    if (!cb) return;
+    for (uint8_t i = 0; i < s_done_cb_n; i++) if (s_done_cb[i] == cb) return;
+    if (s_done_cb_n >= PET_DONE_CB_MAX) {
+        Serial.println("ui_pet: done-callback table full - registration DROPPED");
+        return;
+    }
+    s_done_cb[s_done_cb_n++] = cb;
+}
 void ui_pet_set_urgency(float u) { s_urgency = u < 0 ? 0 : (u > 1 ? 1 : u); }
 void ui_pet_set_wander(bool on)  { s_wander_on = on; }
 bool ui_pet_evolving(void)       { return s_anim == PET_ANIM_EVOLVING; }
@@ -963,7 +986,7 @@ void ui_pet_tick(void)
             s_anim_mouth = MOUTH_OPEN_HAPPY;
             if (el >= EVO_CHEER_MS) {
                 ui_pet_play(PET_ANIM_IDLE);
-                if (s_done_cb) s_done_cb(PET_ANIM_EVOLVING);
+                pet_fire_done(PET_ANIM_EVOLVING);
             }
             break;
         }
@@ -1009,7 +1032,7 @@ void ui_pet_tick(void)
             s_pos_y = PET_HOME_Y;
             lv_obj_clear_flag(o_root, LV_OBJ_FLAG_HIDDEN);
             ui_pet_play(PET_ANIM_IDLE);
-            if (s_done_cb) s_done_cb(PET_ANIM_BATHROOM);
+            pet_fire_done(PET_ANIM_BATHROOM);
             break;
         }
         if (s_bath_phase == 0) {
@@ -1035,7 +1058,7 @@ void ui_pet_tick(void)
             if (t >= 1.0f) {
                 s_pos_x = PET_HOME_X;
                 ui_pet_play(PET_ANIM_IDLE);
-                if (s_done_cb) s_done_cb(PET_ANIM_BATHROOM);
+                pet_fire_done(PET_ANIM_BATHROOM);
             } else {
                 s_pos_x = s_bath_exit + (lv_coord_t)((PET_HOME_X - s_bath_exit) * t);
                 s_off_y = -(lv_coord_t)(6.0f * fabsf(sinf(t * 6.2831853f * 4.0f)));

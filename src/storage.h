@@ -251,6 +251,28 @@ bool          storage_save(const save_t *in, bool force);
 void          storage_defaults(save_t *out);
 bool          storage_wipe(void);
 
+/* --- SAFE BACKUP / RESTORE ----------------------------------------------
+ * A byte-exact copy of the live save, kept in its OWN NVS namespace.
+ *
+ * The namespace matters. storage_wipe() calls Preferences::clear(), which
+ * clears the whole "visitor" namespace - so a backup stored beside the save
+ * would be destroyed by the very reset it exists to undo. It lives in
+ * "visitorb" for the same reason Visit Records live in "visitorv".
+ *
+ * RAW BYTES, not a save_t. Whatever schema and length are on flash are what
+ * get copied, so a backup taken before a migration restores exactly what was
+ * there rather than a re-serialised interpretation of it. That is what makes
+ * this safe to wrap around the destructive migration fixtures (V { " #) and
+ * around a reset, which is the whole point: the real Visitor should survive
+ * a bug sweep.
+ *
+ * Neither call touches the live save except restore(), which overwrites it. */
+bool storage_backup(void);
+bool storage_restore(void);
+/* Reports what the backup slot holds without changing anything. `len` is 0
+ * when no backup exists. */
+bool storage_backup_info(size_t *len, uint16_t *schema, uint32_t *hatch_ts);
+
 /* Diagnostics */
 uint32_t storage_crc32(const uint8_t *data, size_t len);
 

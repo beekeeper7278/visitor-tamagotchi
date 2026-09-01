@@ -78,9 +78,23 @@ void ui_pet_set_x(lv_coord_t x);
 
 /* Called when a ONE-SHOT animation finishes and the pet returns to idle.
  * The bathroom relief bubble needs to fire on return, not on departure, and
- * polling for that from care.cpp would duplicate the state machine. */
+ * polling for that from care.cpp would duplicate the state machine.
+ *
+ * OBSERVERS, NOT AN OWNER. This used to be a single slot assigned by
+ * ui_pet_set_done_cb(), and it had TWO independent owners: care_init()
+ * registered the bathroom handler at boot, and evolve_present() overwrote it
+ * with the evolution handler at the first stage change - without ever
+ * restoring it. Since every Visitor evolves on day 1, the bathroom handler
+ * was dead for the whole of the rest of every visit: no "Oof... much
+ * better.", and - the part that actually mattered - no care_return_to_bed()
+ * after a bathroom trip taken during sleep hours, so the Visitor was left
+ * standing on the floor at 3 am.
+ *
+ * Both handlers already filter by animation and are naturally disjoint, so
+ * they are registered side by side instead of fighting over one pointer.
+ * Registration is idempotent: adding the same function twice is a no-op. */
 typedef void (*pet_anim_done_cb_t)(pet_anim_t finished);
-void ui_pet_set_done_cb(pet_anim_done_cb_t cb);
+void ui_pet_add_done_cb(pet_anim_done_cb_t cb);
 
 /* 0..1 urgency, drives how hard the holding pose squeezes and wiggles. */
 void ui_pet_set_urgency(float u);

@@ -145,7 +145,7 @@ static uint8_t stage_for_day(float day)
     return STAGE_BABY;
 }
 
-uint8_t pet_apply_stage_for_day(float day)
+uint8_t pet_apply_one_stage(float day)
 {
     /* Without a hatch timestamp there is no real calendar age, so the
      * Visitor stays an Egg rather than aging off an untrusted clock. */
@@ -155,26 +155,32 @@ uint8_t pet_apply_stage_for_day(float day)
     }
 
     const uint8_t target = stage_for_day(day);
-    uint8_t moved = 0;
+    if (s.stage >= target) return 0;
 
-    /* Step through every boundary in order, recording each against the day it
-     * ACTUALLY belongs to rather than the day we noticed. An 8-day absence
-     * must record Baby->Kid at day 3 and Kid->Teen at day 7, not both at
-     * day 8 - the journal and evolution will read these timings later, and
-     * "everything happened at once" would be wrong history. */
-    while (s.stage < target) {
-        const uint8_t from = s.stage;
-        s.stage++;
-        moved++;
-        const float boundary =
-            (s.stage == STAGE_KID)   ? STAGE_DAY_KID   :
-            (s.stage == STAGE_TEEN)  ? STAGE_DAY_TEEN  :
-            (s.stage == STAGE_ADULT) ? STAGE_DAY_ADULT : 0.0f;
-        s.stage_day[s.stage] = (uint16_t)boundary;
-        Serial.printf("STAGE: %s -> %s (on day %.2f; noticed on day %.2f)\n",
-                      pet_stage_name(from), pet_stage_name(s.stage),
-                      (double)boundary, (double)day);
-    }
+    /* Record the transition against the day it ACTUALLY belongs to rather
+     * than the day we noticed. An 8-day absence must record Baby->Kid at
+     * day 1 and Kid->Teen at day 3, not both at day 8 - the journal and
+     * evolution read these timings later, and "everything happened at once"
+     * would be wrong history. */
+    const uint8_t from = s.stage;
+    s.stage++;
+    const float boundary =
+        (s.stage == STAGE_KID)   ? STAGE_DAY_KID   :
+        (s.stage == STAGE_TEEN)  ? STAGE_DAY_TEEN  :
+        (s.stage == STAGE_ADULT) ? STAGE_DAY_ADULT : 0.0f;
+    s.stage_day[s.stage] = (uint16_t)boundary;
+    Serial.printf("STAGE: %s -> %s (on day %.2f; noticed on day %.2f)\n",
+                  pet_stage_name(from), pet_stage_name(s.stage),
+                  (double)boundary, (double)day);
+    return 1;
+}
+
+uint8_t pet_apply_stage_for_day(float day)
+{
+    /* Every boundary in order. Callers that need to do per-boundary work
+     * must loop on pet_apply_one_stage() themselves - see pet.h. */
+    uint8_t moved = 0;
+    while (pet_apply_one_stage(day)) moved++;
     return moved;
 }
 

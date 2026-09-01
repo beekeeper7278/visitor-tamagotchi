@@ -47,7 +47,7 @@ void ui_bubble_set_suppressed(bool b) {}
 void ui_pet_set_wander(bool b) {}
 void ui_pet_evolve_to(uint8_t f) {}
 bool ui_bubble_say(bubble_tier_t t, const char *s) { return true; }
-void ui_pet_set_done_cb(pet_anim_done_cb_t cb) {}
+void ui_pet_add_done_cb(pet_anim_done_cb_t cb) {}
 }
 
 struct care { float happy, hunger, clean, disc; int games_per_day; float junk_frac; };

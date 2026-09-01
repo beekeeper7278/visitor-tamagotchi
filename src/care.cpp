@@ -256,7 +256,7 @@ void care_init(lv_obj_t *room_layer)
      * Seeding it with millis() makes the same quiet period deliberate, and
      * makes the arithmetic mean what it says everywhere else. */
     s_last_stink_ms = s_last_ms;
-    ui_pet_set_done_cb([](pet_anim_t a) {
+    ui_pet_add_done_cb([](pet_anim_t a) {
         if (a != PET_ANIM_BATHROOM) return;
         s_bath_active = false;
         ui_bubble_say(BUBBLE_T1_REACTION, "Oof... much better.");
@@ -483,6 +483,25 @@ void care_tick(void)
 
     pet_state_t *p = pet_mutable();
 
+    /* THE SIMULATION IS NOW UP TO DATE TO THIS INSTANT, and last_sim_ts has
+     * to say so. It is the anchor sim_catch_up() measures the next boot's
+     * absence from, and it must stay in step with the STATE that is saved
+     * beside it: persist packs the live meters, so pairing them with a
+     * timestamp from hours earlier makes the save an inconsistent snapshot.
+     *
+     * It used to be written only at boot (main.cpp, after the catch-up), so
+     * it held the BOOT time for the entire session and every reboot
+     * re-simulated the whole previous uptime - time care_tick() had already
+     * simulated live. Measured on hardware: a 12-second flash produced a
+     * 342-second catch-up, which double-charged every meter, aged floor
+     * messes at twice real time, double-weighted the evolution accumulators
+     * and handed visit_advance() extra departure evaluations.
+     *
+     * With the pair kept consistent, a reboot re-simulates only from the
+     * last SAVE - and that is correct, because the state it starts from is
+     * the state as of that same save. */
+    if (rtc_trusted()) p->last_sim_ts = rtc_now();
+
     /* Self-heal: if something interrupted the bathroom run, the completion
      * callback never fires, and a stuck s_bath_active would freeze the
      * bathroom need forever. Trust the renderer's actual state over our own
@@ -542,12 +561,23 @@ void care_tick(void)
      * gets older - sim_catch_up() only runs at boot, so without this a device
      * left switched on never changed stage at all. */
     pet_refresh_age();
-    if (pet_apply_stage_for_day(pet_age_days()) > 0) {
-        const uint8_t f = evolve_pick_form(p->stage);
+    /* ONE BOUNDARY AT A TIME. A live tick normally crosses at most one, but
+     * the age-jump diagnostics and a tick suspended across a boundary can
+     * cross several - and the per-boundary work (form pick, evo_path[],
+     * counter reset, growth spurt) has to run for each. See pet.h and the
+     * matching loop in sim_catch_up(). */
+    bool crossed_boundary = false;
+    while (pet_apply_one_stage(pet_age_days())) {
+        crossed_boundary = true;
+        const uint8_t f = evolve_pick_form_on(p->stage,
+                                             (float)p->stage_day[p->stage]);
         if (f != p->form_id) evolve_present(f, false);
-        evolve_on_stage_entered(p->stage, p->days_alive);
+        /* The boundary day, not today - see the matching note in sim.cpp. */
+        evolve_on_stage_entered(p->stage, p->stage_day[p->stage]);
         persist_mark_dirty("stage change");
-    } else if (p->stage == STAGE_ADULT && pet_age_days() >= visit_recheck_day()) {
+    }
+    if (!crossed_boundary &&
+        p->stage == STAGE_ADULT && pet_age_days() >= visit_recheck_day()) {
         /* The improvement-only glow-up. It used to live only in
          * sim_catch_up(), which meant a device left switched ON never got it -
          * the same fault the age clock had. Never regresses, so running it

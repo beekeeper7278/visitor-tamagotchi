@@ -354,6 +354,106 @@ bool storage_wipe(void)
     return s_prefs.clear();
 }
 
+/* --- safe backup / restore ----------------------------------------------
+ * See storage.h. Separate namespace so storage_wipe() cannot reach it, and
+ * raw bytes so a backup is a photograph rather than a re-interpretation. */
+#define NVS_BAK_NAMESPACE  "visitorb"
+#define NVS_BAK_KEY        "bak"
+
+bool storage_backup(void)
+{
+    if (!s_open) return false;
+
+    const size_t len = s_prefs.getBytesLength(NVS_KEY_SAVE);
+    if (len == 0 || len > SAVE_SIZE_BUDGET) {
+        Serial.printf("BACKUP: nothing sane to copy (live save is %u bytes)\n",
+                      (unsigned)len);
+        return false;
+    }
+
+    uint8_t buf[SAVE_SIZE_BUDGET];
+    if (s_prefs.getBytes(NVS_KEY_SAVE, buf, len) != len) {
+        Serial.println("BACKUP: could not read the live save");
+        return false;
+    }
+
+    Preferences bak;
+    if (!bak.begin(NVS_BAK_NAMESPACE, false)) {
+        Serial.println("BACKUP: could not open the backup namespace");
+        return false;
+    }
+    const size_t w = bak.putBytes(NVS_BAK_KEY, buf, len);
+    bak.end();
+
+    if (w != len) { Serial.println("BACKUP: write FAILED"); return false; }
+
+    /* Read back what the header says, so the log names the Visitor that was
+     * actually saved rather than the one we assume was. */
+    uint16_t schema = 0; uint32_t hatch = 0;
+    if (len >= 4)  memcpy(&schema, buf, 2);
+    if (len >= 12) memcpy(&hatch, buf + 8, 4);
+    Serial.printf("BACKUP: %u bytes stored (schema %u, hatch_ts %lu)\n",
+                  (unsigned)len, (unsigned)schema, (unsigned long)hatch);
+    return true;
+}
+
+bool storage_restore(void)
+{
+    if (!s_open) return false;
+
+    Preferences bak;
+    if (!bak.begin(NVS_BAK_NAMESPACE, true)) {
+        Serial.println("RESTORE: no backup namespace - nothing to restore");
+        return false;
+    }
+    const size_t len = bak.getBytesLength(NVS_BAK_KEY);
+    if (len == 0 || len > SAVE_SIZE_BUDGET) {
+        bak.end();
+        Serial.println("RESTORE: no usable backup present");
+        return false;
+    }
+    uint8_t buf[SAVE_SIZE_BUDGET];
+    const size_t got = bak.getBytes(NVS_BAK_KEY, buf, len);
+    bak.end();
+    if (got != len) { Serial.println("RESTORE: could not read the backup"); return false; }
+
+    const size_t w = s_prefs.putBytes(NVS_KEY_SAVE, buf, len);
+    /* The shadow is a copy of what we last WROTE through storage_save(); a
+     * raw restore goes behind its back, so invalidate it or the next
+     * identical save would be suppressed as a no-op. */
+    s_shadow_valid = false;
+    if (w != len) { Serial.println("RESTORE: write FAILED"); return false; }
+
+    uint16_t schema = 0; uint32_t hatch = 0;
+    if (len >= 4)  memcpy(&schema, buf, 2);
+    if (len >= 12) memcpy(&hatch, buf + 8, 4);
+    Serial.printf("RESTORE: %u bytes written back (schema %u, hatch_ts %lu)\n",
+                  (unsigned)len, (unsigned)schema, (unsigned long)hatch);
+    Serial.println("RESTORE: reboot (a full upload or a power cycle) to load it");
+    return true;
+}
+
+bool storage_backup_info(size_t *len, uint16_t *schema, uint32_t *hatch_ts)
+{
+    if (len) *len = 0;
+    if (schema) *schema = 0;
+    if (hatch_ts) *hatch_ts = 0;
+
+    Preferences bak;
+    if (!bak.begin(NVS_BAK_NAMESPACE, true)) return false;
+    const size_t n = bak.getBytesLength(NVS_BAK_KEY);
+    if (n == 0 || n > SAVE_SIZE_BUDGET) { bak.end(); return false; }
+    uint8_t buf[SAVE_SIZE_BUDGET];
+    const size_t got = bak.getBytes(NVS_BAK_KEY, buf, n);
+    bak.end();
+    if (got != n) return false;
+
+    if (len) *len = n;
+    if (schema && n >= 4)  memcpy(schema, buf, 2);
+    if (hatch_ts && n >= 12) memcpy(hatch_ts, buf + 8, 4);
+    return true;
+}
+
 bool storage_write_fake_v5(uint32_t hatch_ts, float hunger, float care_happy,
                            uint8_t form_id, uint8_t trait_a, uint8_t trait_b)
 {

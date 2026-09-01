@@ -1115,10 +1115,15 @@ static void diag_time_travel(uint32_t hours)
     const float d = pet_age_days();
     Serial.printf("TIME TRAVEL +%luh  ->  age %.3f days (%s)\n",
                   (unsigned long)hours, (double)d, pet_stage_name(p->stage));
-    if (pet_apply_stage_for_day(d) > 0) {
-        const uint8_t f = evolve_pick_form(p->stage);
+    /* One boundary at a time: a +24h jump from day 2.5 crosses Kid->Teen
+     * only, but `%` twice from day 0.5 crosses two, and the per-boundary
+     * work must run for each or the test itself produces a Visitor the
+     * production paths would never build. See pet.h. */
+    while (pet_apply_one_stage(d)) {
+        const uint8_t f = evolve_pick_form_on(p->stage,
+                                             (float)p->stage_day[p->stage]);
         if (f != p->form_id) evolve_present(f, false);
-        evolve_on_stage_entered(p->stage, p->days_alive);
+        evolve_on_stage_entered(p->stage, p->stage_day[p->stage]);
     }
     persist_mark_dirty("time travel");
 }
@@ -1246,6 +1251,8 @@ static void diag_phase10_menu(void)
     Serial.println("  motion: m report   c calibrate   g toggle gravity   n settings");
     Serial.println("          S arm motion history (then handle it, then TAB m)");
     Serial.println("  clock : R restore to 16:00 (awake band, after N/G/A)");
+    Serial.println("  SAVE  : B backup the Visitor   U restore it   i backup info");
+    Serial.println("          (own NVS namespace; survives X and the V { \" # fixtures)");
     const uint32_t t0 = millis();
     while (!Serial.available() && millis() - t0 < 4000) delay(10);
     if (!Serial.available()) { Serial.println("  (timed out)"); return; }
@@ -1253,6 +1260,23 @@ static void diag_phase10_menu(void)
     switch (k) {
         case 't': audio_test_tone(600, 1000); break;
         case 'r': audio_report(); break;
+        /* --- SAFE BACKUP / RESTORE ---------------------------------------
+         * Added for the v1 bug sweep. The destructive fixtures (X, and the
+         * migration hops V { " #) overwrite the one real save and never put
+         * it back, which made them unusable on a device carrying a Visitor
+         * somebody cares about. Wrap them: TAB B, run the fixture, TAB U,
+         * then reboot with a full upload or a power cycle. */
+        case 'B': storage_backup();  break;
+        case 'U': storage_restore(); break;
+        case 'i': {
+            size_t len = 0; uint16_t schema = 0; uint32_t hatch = 0;
+            if (storage_backup_info(&len, &schema, &hatch))
+                Serial.printf("BACKUP SLOT: %u bytes, schema %u, hatch_ts %lu\n",
+                              (unsigned)len, (unsigned)schema, (unsigned long)hatch);
+            else
+                Serial.println("BACKUP SLOT: empty");
+            break;
+        }
         /* PERSIST as well as apply. The console setting the live volume but
          * not the stored one made a persistence test read as a failure when
          * the only thing broken was the fixture - exactly the kind of

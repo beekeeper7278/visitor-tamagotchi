@@ -63,19 +63,21 @@ void evolve_accumulate(float hours, bool asleep)
  * same behaviour at 0.29/day - identical care, far worse score, purely
  * because the stage got shorter. The floor keeps per-day rates comparable
  * across stages of very different lengths. */
-float evolve_stage_days(void)
+float evolve_stage_days_on(float day)
 {
     const pet_state_t *p = pet_get();
-    float d = pet_age_days() - (float)p->stage_start_day + 0.5f;
+    float d = day - (float)p->stage_start_day + 0.5f;
     return (d < 1.0f) ? 1.0f : d;
 }
 
-evo_scores_t evolve_scores(void)
+float evolve_stage_days(void) { return evolve_stage_days_on(pet_age_days()); }
+
+evo_scores_t evolve_scores_on(float day)
 {
     const pet_state_t *p = pet_get();
     evo_scores_t s;
 
-    const float stage_days = evolve_stage_days();
+    const float stage_days = evolve_stage_days_on(day);
 
     s.engage = clamp01_100(100.0f * (float)p->games_played / (2.0f * stage_days));
 
@@ -100,10 +102,12 @@ evo_scores_t evolve_scores(void)
     return s;
 }
 
-uint8_t evolve_pick_form(uint8_t stage)
+evo_scores_t evolve_scores(void) { return evolve_scores_on(pet_age_days()); }
+
+uint8_t evolve_pick_form_on(uint8_t stage, float day)
 {
     const pet_state_t *p = pet_get();
-    evo_scores_t s = evolve_scores();
+    evo_scores_t s = evolve_scores_on(day);
 
     /* Neutral zone: anything within EVO_EPS of the line takes the kinder
      * branch by documented tie-break, rather than following FP residue. */
@@ -139,6 +143,11 @@ uint8_t evolve_pick_form(uint8_t stage)
         return FORM_ADULT_SWEET;
     }
     return FORM_BABY;
+}
+
+uint8_t evolve_pick_form(uint8_t stage)
+{
+    return evolve_pick_form_on(stage, pet_age_days());
 }
 
 /* Best > Sweet > Playful > Chonky > Grumpy > Scruffy [SPEC section 3] */
@@ -288,7 +297,7 @@ void evolve_present(uint8_t new_form, bool announce_only)
     pet_record_form();
 
     audio_play(SND_EVOLVE);
-    ui_pet_set_done_cb(evo_done_cb);
+    ui_pet_add_done_cb(evo_done_cb);
     ui_pet_evolve_to(new_form);
 
     journal_add(JM_EVOLVED, new_form, 0);

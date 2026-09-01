@@ -153,6 +153,23 @@ float pet_weight_norm(void);
  * stage only; the FORM is Phase 8. Returns the number of transitions made. */
 uint8_t pet_apply_stage_for_day(float day);
 
+/* Advance AT MOST ONE stage boundary toward whatever `day` implies. Returns
+ * 1 if a boundary was crossed, 0 if the stage is already correct.
+ *
+ * This exists because the per-boundary work - picking the form, recording it
+ * in evo_path[], resetting the per-stage counters and running the growth
+ * spurt - has to happen ONCE PER BOUNDARY, and pet_apply_stage_for_day()
+ * walks them all in one call. Every caller that only wants the stage number
+ * should keep using pet_apply_stage_for_day(); callers that do per-boundary
+ * work must loop on this instead:
+ *
+ *     while (pet_apply_one_stage(day)) { ...work for p->stage... }
+ *
+ * An absence that spans Baby -> Kid -> Teen otherwise picked a form only for
+ * Teen, leaving evo_path[] blank at Kid and denying the teen selector its
+ * "was a Good Kid" bias, because form_id was still FORM_BABY when it ran. */
+uint8_t pet_apply_one_stage(float day);
+
 /* Record the CURRENT form against the CURRENT stage in evo_path[].
  *
  * evo_path[] is the "How I grew up" history, and it used to be written from
