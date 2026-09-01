@@ -676,14 +676,74 @@
 #define MISCHIEF_W_TEEN         62      /* third                            */
 #define MISCHIEF_W_ADULT        40      /* least                            */
 
-#define MISCHIEF_CHECK_FAST_MS  15000UL /* roll cadence (was 30 s)          */
 #define MISCHIEF_BASE_PCT_9_5   14      /* % per roll before weighting      */
 
-/* Randomised gap between opportunities. A naturally mischievous Visitor in
- * active play lands roughly one every 1-3 minutes; a calm one is far rarer
- * because the roll itself keeps failing, not because the gap is longer. */
-#define MISCHIEF_GAP_MIN_MS     60000UL
-#define MISCHIEF_GAP_MAX_MS     180000UL
+/* --- HOW OFTEN, AS ONE DIAL [v1.0.0 pre-release] ------------------------
+ * Reported on hardware as happening too often. THE ONE NUMBER TO TURN:
+ *
+ *   100 = the Phase 9.5 rate.  50 = half as often.  200 = twice as often.
+ *
+ * It scales the SCHEDULE - the roll cadence and the gap - and deliberately
+ * does NOT touch mischief_pct(). That is the whole design, and the reason is
+ * arithmetic rather than taste.
+ *
+ * The mean time between opportunities is
+ *
+ *     T = mean_gap + cadence x (1 - p) / p
+ *
+ * because the gap is a hard wait and the roll after it is geometric. So
+ * there are two terms, and scaling only one of them does NOT halve the rate
+ * - it changes T by an amount that DEPENDS ON p, which is precisely the
+ * thing that must not change. Measured against the real per-roll figures
+ * this build produces (Kid 9%, Baby 7%, Teen 5%, Adult 3%, a neglected Kid
+ * 27%, a very calm Adult 1%):
+ *
+ *     halve p only     1.00x .. 1.83x     <- and 1.00x is a calm Visitor
+ *                                            pinned on the 1% clamp, i.e.
+ *                                            NO reduction at all, which
+ *                                            would leave calm Visitors
+ *                                            relatively WILDER than now
+ *     double gap only  1.07x .. 1.75x
+ *     double cadence   1.25x .. 1.93x
+ *     BOTH             2.00x for every p, exactly
+ *
+ * Scaling both terms together is the only option whose ratio is independent
+ * of p. Because p is left completely alone, every relative behaviour is
+ * preserved BY CONSTRUCTION rather than by re-tuning: the stage ordering
+ * (Kid > Baby > Teen > Adult), the personality modifiers, the hidden
+ * tendency, the current discipline level and the learned_mischief EMA all
+ * still compose exactly as they did. The `>` report's percentage table is
+ * byte-for-byte the same before and after; only the cadence and gap move.
+ *
+ * Halving also returns the cadence to 30 s, which was the pre-9.5 value, so
+ * it is a proven number rather than a new one.
+ *
+ * NOT MADE TO DISAPPEAR. At 50 the mean interval is Kid 9.1 min, Baby 10.6,
+ * Teen 13.5, Adult 20.2 - so even the calmest stage still offers about three
+ * opportunities an hour. Turn this down further only with the same figures
+ * in front of you; `>` prints them live. */
+#define MISCHIEF_RATE_PCT       50
+
+/* A zero here divides by zero in the three derived values below, and would
+ * do it silently in the preprocessor. Guarded rather than trusted. */
+#if MISCHIEF_RATE_PCT < 5 || MISCHIEF_RATE_PCT > 400
+#error "MISCHIEF_RATE_PCT is a percentage of the Phase 9.5 rate: keep it in 5..400"
+#endif
+
+/* The 100% reference values. Phase 9.5 set these directly; they are now the
+ * baseline the dial scales, so the history stays legible and going back to
+ * the old feel is MISCHIEF_RATE_PCT 100 rather than three edits. */
+#define MISCHIEF_CHECK_BASE_MS   15000UL  /* roll cadence at 100%           */
+#define MISCHIEF_GAP_MIN_BASE_MS 60000UL  /* randomised gap, at 100%        */
+#define MISCHIEF_GAP_MAX_BASE_MS 180000UL
+
+/* Randomised gap between opportunities, so nothing is ever back to back. At
+ * 100% a naturally mischievous Visitor in active play lands roughly one
+ * every 1-3 minutes; a calm one is far rarer because the roll itself keeps
+ * failing, not because the gap is longer. */
+#define MISCHIEF_CHECK_FAST_MS  (MISCHIEF_CHECK_BASE_MS   * 100UL / MISCHIEF_RATE_PCT)
+#define MISCHIEF_GAP_MIN_MS     (MISCHIEF_GAP_MIN_BASE_MS * 100UL / MISCHIEF_RATE_PCT)
+#define MISCHIEF_GAP_MAX_MS     (MISCHIEF_GAP_MAX_BASE_MS * 100UL / MISCHIEF_RATE_PCT)
 
 /* SETTLING-IN HOLDS. A Visitor that has just arrived must not misbehave
  * before it has finished arriving.

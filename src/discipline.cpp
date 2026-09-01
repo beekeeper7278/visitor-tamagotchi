@@ -347,26 +347,43 @@ void discipline_report(void)
     /* Print the ORDERING rather than asking anyone to take it on trust. The
      * effective rate is what the roll actually uses, so a wrong weight shows
      * up here as a wrong order rather than as a feeling. */
+    Serial.printf("  frequency dial MISCHIEF_RATE_PCT = %d%%  "
+                  "(100 = the Phase 9.5 rate)\n", MISCHIEF_RATE_PCT);
     Serial.println("  baseline frequency by stage (spec order: Kid > Baby > Teen > Adult):");
     static const uint8_t ORDER[4] = { STAGE_KID, STAGE_BABY, STAGE_TEEN, STAGE_ADULT };
+
+    /* THE FULL INTERVAL, not just the roll.
+     *
+     * This line used to print only "one every N min BEFORE the gap", which is
+     * the wrong number to judge the feel by and the right number to be misled
+     * by: the gap is a hard wait that the roll never sees, and at the current
+     * settings it is the LARGER of the two terms for a lively Visitor. What a
+     * player experiences is
+     *
+     *     T = mean_gap + cadence x (1 - p) / p
+     *
+     * the geometric wait for a successful roll, on top of the gap. Printing T
+     * is what makes "about half as often" checkable instead of arguable. */
+    const float gap_s = (float)(MISCHIEF_GAP_MIN_MS + MISCHIEF_GAP_MAX_MS) / 2000.0f;
     for (uint8_t i = 0; i < 4; i++) {
         const uint8_t st = ORDER[i];
         /* The SAME function the roll uses, evaluated for each stage, so the
          * printed ordering cannot drift away from the real one. */
-        const int eff = mischief_pct(st);
-        const float per_min = 60.0f / (MISCHIEF_CHECK_FAST_MS / 1000.0f)
-                            * (eff / 100.0f);
-        Serial.printf("    %-6s weight %3u%%  ->  %2d%% per %lu s roll  "
-                      "(~one every %.1f min before the gap)  %s\n",
+        const int   eff = mischief_pct(st);
+        const float pr  = (float)eff / 100.0f;
+        const float mean_s = gap_s + (MISCHIEF_CHECK_FAST_MS / 1000.0f)
+                                   * (1.0f - pr) / pr;
+        Serial.printf("    %-6s weight %3u%%  ->  %2d%% per %lu s roll  ->  "
+                      "one every %5.1f min  (%.1f/hour)  %s\n",
                       pet_stage_name(st), discipline_stage_weight(st), eff,
                       (unsigned long)(MISCHIEF_CHECK_FAST_MS / 1000),
-                      (double)(per_min > 0.0f ? 1.0f / per_min : 0.0f),
+                      (double)(mean_s / 60.0f), (double)(3600.0f / mean_s),
                       st == p->stage ? "<- current" : "");
     }
-    Serial.printf("    plus a randomised %lu-%lu s gap after each one, so nothing\n",
+    Serial.printf("    the interval above INCLUDES the randomised %lu-%lu s gap\n",
                   (unsigned long)(MISCHIEF_GAP_MIN_MS / 1000),
                   (unsigned long)(MISCHIEF_GAP_MAX_MS / 1000));
-    Serial.println("    is ever back to back.");
+    Serial.println("    that follows each one, so nothing is ever back to back.");
     Serial.println("  needs are NEVER misconduct: hunger, tiredness, dirt, an accident");
     Serial.println("  from an ignored need, and refusing food when genuinely full.");
     Serial.println("-----------------------------------------------------------");

@@ -7,11 +7,16 @@ Updated 2026-09-01 for the v1.0.0 pre-release — see §0, §1 and §2f.
 
 ## 0. Status
 
-**The v1 release-candidate bug sweep has STARTED and is IN PROGRESS.** Two
-commits have landed on `wip/phase8-9-pacing` and are pushed. Both are built
-and flashed; **neither has been accepted on hardware yet**, and under the
-phase gate that means they are not finished. §2f says exactly what was
-changed and §9 lists the six tests that decide it.
+**The v1 release-candidate bug sweep has STARTED and is IN PROGRESS.**
+Committed and pushed on `wip/phase8-9-pacing`, and flashed:
+
+- `c0603c7` four defects found by the sweep (§2f)
+- `311f2b9` Date & Time before the hatch, safe clock correction (§2f)
+- the mischief-frequency halving (§2g)
+
+**Test 1 of the six PASSES on hardware** — see §9, which carries the
+measurement. The rest are still outstanding, and under the phase gate that
+means the sweep is not finished.
 
 The user calls this state **"v1.0.0 pre-release"**. It is NOT tagged `v1.0.0`
 and NOT merged to `main`; both need asking for.
@@ -802,6 +807,59 @@ it" would fabricate the very confirmation the flag exists to demand. The
 consequence is mild and intended: an upgrading device asks for the date once,
 at its next egg. A live Visitor is untouched — the gate is pre-hatch only.
 
+## 2g. Mischief frequency halved [v1.0.0 pre-release]
+
+Reported on hardware as happening too often. Halved, with ONE config dial:
+`MISCHIEF_RATE_PCT` (100 = the Phase 9.5 rate, 50 = half as often).
+
+**It scales the SCHEDULE, not the probability, and that is the whole design.**
+The mean interval between opportunities is
+
+    T = mean_gap + cadence x (1 - p) / p
+
+- two terms, because the gap is a hard wait and the roll after it is
+geometric. Scaling only one of them changes T by an amount that DEPENDS ON
+p, which is exactly the thing that had to stay fixed. Measured against the
+real per-roll figures this build produces:
+
+    halve p only     1.00x .. 1.83x    <- 1.00x is a calm Visitor pinned on
+                                          the 1% clamp: NO reduction at all,
+                                          leaving calm Visitors relatively
+                                          WILDER than before
+    double gap only  1.07x .. 1.75x
+    double cadence   1.25x .. 1.93x
+    BOTH             2.00x for every p, exactly
+
+So the dial multiplies the cadence and the gap together and leaves
+`mischief_pct()` alone. **Every function in `discipline.cpp` outside
+`discipline_report()` is byte-identical** — fair/unfair logic, rewards and
+penalties, mischief types, the learned-behaviour EMA and the evolution
+history effects were all verified unchanged by diffing the functions, not by
+inspection. The only functional change in the build is three derived
+constants in `config.h`.
+
+Confirmed on hardware, same Visitor, before and after (`>`):
+
+    Kid    weight 100%   9% per roll   4.5 -> 9.1 min   (6.6/hour)
+    Baby   weight  85%   7%            5.3 -> 10.6 min  (5.6/hour)
+    Teen   weight  62%   5%            6.8 -> 13.5 min  (4.4/hour)
+    Adult  weight  40%   3%           10.1 -> 20.2 min  (3.0/hour)
+
+The percentages are byte-identical before and after, which is the evidence
+that the ordering (Kid > Baby > Teen > Adult), the personality modifiers and
+the discipline/learned history all still compose as they did. **The mechanic
+has not disappeared**: even the calmest stage still offers about three
+opportunities an hour.
+
+`>` now prints the FULL interval including the gap, plus the dial's value.
+It used to print only "one every N min BEFORE the gap", which is the wrong
+number to judge the feel by - at these settings the gap is the larger of the
+two terms for a lively Visitor. Turn the dial further only with those
+figures in front of you.
+
+A `#error` guard rejects a rate outside 5..400; a zero would have divided by
+zero silently in the preprocessor.
+
 ## 3. Save schema
 
 **Schema 8. `sizeof(save_t)` = 433 bytes. `SAVE_SIZE_BUDGET` = 448.**
@@ -1063,9 +1121,21 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
     POOP_COMMENT_GAP_MS 300000  POOP_COMMENT_CHANCE_PCT 45
 
     MISCHIEF_W_BABY/KID/TEEN/ADULT   85 / 100 / 62 / 40
-    MISCHIEF_CHECK_FAST_MS 15000     MISCHIEF_BASE_PCT_9_5 14
-    MISCHIEF_GAP_MIN/MAX_MS          60000 / 180000
+    MISCHIEF_RATE_PCT 50             the ONE frequency dial; 100 = 9.5 rate
+    MISCHIEF_CHECK_BASE_MS 15000     -> effective 30000 at 50%
+    MISCHIEF_GAP_MIN/MAX_BASE_MS     60000 / 180000 -> 120000 / 360000
+    MISCHIEF_BASE_PCT_9_5 14         (unchanged by the dial, deliberately)
     MISCHIEF_SETTLE_HATCH_MS 120000  _BOOT_MS 60000
+
+Spontaneous mischief was HALVED in the v1.0.0 pre-release (§2g). The dial
+scales the SCHEDULE only; `mischief_pct()` is byte-identical, so the whole
+percentage table and every relative behaviour are untouched. Measured on
+hardware, same Visitor before and after:
+
+    Kid    9% per roll   4.5 -> 9.1 min    (6.6/hour)
+    Baby   7%            5.3 -> 10.6 min   (5.6/hour)
+    Teen   5%            6.8 -> 13.5 min   (4.4/hour)
+    Adult  3%           10.1 -> 20.2 min   (3.0/hour)
     LEARN_START 50.0  LEARN_ALPHA 0.22  LEARN_WEIGHT_PCT 60
 
 ## 8. Known bugs / open issues
@@ -1185,7 +1255,20 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
    from the user's own report. `TAB a` before and after each gives the
    anchors and a PASS/FAIL age line:
 
-       1  wrong RTC date -> correct it BEFORE hatch -> hatch -> age 0
+       1  PASSED 2026-09-01. Verified end to end on hardware:
+          RTC read Sep 14 2026 (~13.6 days fast) and the settings v1->v2
+          migration had left the clock unconfirmed, so this was a REAL
+          stale-clock case rather than a staged one.
+            START allowed : NO          (gate held, START drawn dead)
+            [date corrected on the touch setter]
+            confirmed     : YES, by a human, verified
+            START allowed : yes
+            egg_hatch_ts  : 1819810748  (countdown running)
+          and at the hatch:
+            hatch_ts      : 1819810748  <- the exact countdown deadline,
+                                           stamped off the corrected clock
+            pet_age_days  : 0.0000 at the hatch
+            days_alive 0, days_alive_max 0, stage Baby
        2  live Visitor -> clock +5 days  -> age preserved   (TAB >)
        3  live Visitor -> clock -5 days  -> age preserved   (TAB <)
        4  neither correction produces fake offline simulation:
