@@ -1308,6 +1308,74 @@ static void diag_fav_recovery(void)
  * The ADC channels must be ENABLED for 0x34+ to mean anything, and enabling
  * them is a WRITE - so 0x30 is the register that decides whether this board
  * can report a battery voltage without the project touching the PMIC. */
+/* --- PLAY THE WHOLE PACK, EVERY CLIP, IN ORDER ---------------------------
+ * The full audition. Walks the pack INDEX rather than a list of texts,
+ * because the pack is hash-keyed exactly so that no text table has to live on
+ * the device - see audio_play_index().
+ *
+ * Index order is HASH order, which is not the order anything says them; the
+ * point here is completeness, not narrative. The matching host-side listing
+ * is `sort -k1` over tools/voicepack/manifest.tsv, so a listener can follow
+ * along line by line if they want to know which is which.
+ *
+ * Each clip is waited out exactly, plus a short gap, so nothing talks over
+ * anything. Press any key to stop - at roughly nine minutes a pack this is
+ * not something to sit through by accident. */
+static void diag_play_whole_pack(uint8_t pack)
+{
+    if (!voice_pack_ready(pack)) {
+        Serial.printf("pack %u is not mounted\n", pack); return;
+    }
+    if (audio_volume() == VOL_MUTE) {
+        Serial.println("VOLUME IS MUTED - unmute first (TAB 1/2/3), or this "
+                       "sweep is silent");
+        return;
+    }
+
+    uint32_t n = 0, h, o, l;
+    while (voice_index_at(pack, n, &h, &o, &l)) n++;
+
+    /* Total first, so the listener knows what they are committing to. */
+    uint32_t total_ms = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (voice_index_at(pack, i, &h, &o, &l))
+            total_ms += (uint32_t)((float)l * 2.0f * 1000.0f / (float)voice_rate());
+    }
+    Serial.println();
+    Serial.println("=== PLAYING THE ENTIRE PACK ===============================");
+    Serial.printf("  pack %s, stage %s, %lu clips, about %lu min %lu s of audio\n",
+                  pack == VOICE_BOY ? "BOY" : "GIRL",
+                  pet_stage_name(pet_get()->stage), (unsigned long)n,
+                  (unsigned long)(total_ms / 60000),
+                  (unsigned long)((total_ms % 60000) / 1000));
+    Serial.println("  index order is HASH order; follow along with");
+    Serial.println("  `sort -k1 tools/voicepack/manifest.tsv`");
+    Serial.println("  press any key to stop");
+
+    uint32_t played = 0, silent = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (Serial.available()) {
+            while (Serial.available()) Serial.read();
+            Serial.printf("  STOPPED by keypress after %lu of %lu\n",
+                          (unsigned long)i, (unsigned long)n);
+            break;
+        }
+        voice_index_at(pack, i, &h, &o, &l);
+        const uint32_t ms = audio_play_index(pack, i);
+        if (!ms) { silent++; Serial.printf("  %3lu/%lu  %08lx  NO AUDIO\n",
+                                           (unsigned long)(i + 1), (unsigned long)n,
+                                           (unsigned long)h); continue; }
+        played++;
+        Serial.printf("  %3lu/%lu  %08lx  %4lu ms  %5lu B\n",
+                      (unsigned long)(i + 1), (unsigned long)n,
+                      (unsigned long)h, (unsigned long)ms, (unsigned long)l);
+        delay(ms + 260);           /* the clip, then a breath */
+    }
+    Serial.printf("  played %lu, silent %lu\n",
+                  (unsigned long)played, (unsigned long)silent);
+    Serial.println("-----------------------------------------------------------");
+}
+
 /* --- PACK INTEGRITY + THE LINES THAT USED TO BEEP ------------------------
  * Two checks the runtime sweep structurally cannot do.
  *
@@ -1677,6 +1745,8 @@ static void diag_phase10_menu(void)
     Serial.println("  PMIC  : P  AXP2101 READ-ONLY probe (writes nothing)");
     Serial.println("  VOICE : I  pack integrity + the once-missing regression list");
     Serial.println("          A  SPEAK the previously-broken lines aloud");
+    Serial.println("          e  PLAY THE WHOLE BOY PACK   E  the whole GIRL pack");
+    Serial.println("             (~9 min each; any key stops)");
     Serial.println("  FAV   : F  selection weighting (400 rolls, non-destructive)");
     Serial.println("          Z  boredom walk (DOES advance this Visitor's plays)");
     Serial.println("          Y  boredom RECOVERY (build up, then play others)");
@@ -1706,6 +1776,8 @@ static void diag_phase10_menu(void)
         case 'P': diag_pmic_probe();         break;
         case 'I': diag_voice_integrity();    break;
         case 'A': diag_voice_speak_fixed();  break;
+        case 'e': diag_play_whole_pack(VOICE_BOY);  break;
+        case 'E': diag_play_whole_pack(VOICE_GIRL); break;
         case 'F': diag_fav_distribution();   break;
         case 'Z': diag_fav_boredom();        break;
         case 'Y': diag_fav_recovery();       break;

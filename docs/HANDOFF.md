@@ -1076,6 +1076,25 @@ touched), noise 0.70, noise_w at the model default. The device-side stage
 ladder is likewise unchanged at 1.00 / 0.980 / 0.955 / 0.930, so the Adult
 sits 7% below the Baby - nowhere near an adult human, which was the concern.
 
+### Playing the whole pack
+
+`TAB e` / `TAB E` audition every clip in a pack end to end - 321 clips, about
+8.5 minutes each. It walks the pack INDEX rather than a list of texts:
+speaking every line through `audio_say()` would need all 321 strings ON the
+device, and the pack is keyed by hash precisely so that no such table has to
+exist and be kept in sync. `audio_play_index()` plays by offset and returns
+the clip's length so the sweep can wait exactly as long as it plays.
+
+Index order is HASH order, which is not the order anything says them - the
+point is completeness, not narrative. `sort -k1,1 manifest.tsv` produces the
+matching listing, so a specific clip number can be traced back to its text
+and source file.
+
+Two things worth knowing before running it: the UI is FROZEN for the
+duration (the sweep blocks the LVGL timer; `delay()` yields, so the watchdog
+is fine and touch resumes afterwards), and it is silent if the volume is
+muted, which it checks and refuses on.
+
 ### Verification, in three places
 
 A generator cannot detect its own blind spot, so the check does not live in
@@ -1674,6 +1693,10 @@ seconds. Use `~/.platformio/penv/bin/python` (it has pyserial).
            every anchor a correction rebases)
     TAB I  voice pack integrity + the once-missing regression list
     TAB A  SPEAK the previously-broken lines aloud
+    TAB e  PLAY THE WHOLE BOY PACK   TAB E  the whole GIRL pack
+           (321 clips, ~8.5 min each, any key stops; walks the pack INDEX so
+            it needs no text table on the device - see audio_play_index().
+            Follow along with `sort -k1,1 tools/voicepack/manifest.tsv`)
     TAB B  backup the Visitor   TAB U  restore it   TAB i  slot info
            (own NVS namespace; survives X and the V { " # fixtures)
     TAB P  AXP2101 READ-ONLY probe (writes NOTHING) + battery state

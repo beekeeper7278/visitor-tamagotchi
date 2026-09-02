@@ -113,6 +113,19 @@ void audio_say_from(const char *text, uint8_t pack);
 void audio_set_pack_override(int pack);
 int  audio_pack_override(void);
 
+/* DIAGNOSTIC: play the i'th clip of a pack BY INDEX, with no text.
+ *
+ * Exists so the whole pack can be auditioned end to end. Speaking every line
+ * through audio_say() would need the 321 texts ON the device, and the pack is
+ * keyed by HASH precisely so that no such table has to exist and be kept in
+ * sync - adding one for a diagnostic would reintroduce the very thing the
+ * design avoids. Walking the index instead needs nothing but the pack.
+ *
+ * Returns the clip's length in milliseconds so the caller can wait exactly as
+ * long as it plays, or 0 if there is no such clip. The per-stage pitch is
+ * applied, so what is heard is what this Visitor would hear. */
+uint32_t audio_play_index(uint8_t pack, uint32_t i);
+
 /* Bring-up only: a plain 1 kHz tone, the thing a human ear can confirm. */
 void audio_test_tone(uint16_t ms, uint16_t hz);
 

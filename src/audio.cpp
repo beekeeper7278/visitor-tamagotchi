@@ -704,6 +704,25 @@ void audio_say_from(const char *text, uint8_t pack)
     if (s_q) xQueueSend(s_q, &r, 0);
 }
 
+uint32_t audio_play_index(uint8_t pack, uint32_t i)
+{
+    if (!s_ready || s_vol == VOL_MUTE) return 0;
+    uint32_t h, off, len;
+    if (!voice_index_at(pack, i, &h, &off, &len) || !len) return 0;
+
+    req_t r = {};
+    r.kind = REQ_CLIP; r.off = off; r.len = len;
+    r.pitch = stage_pitch(); r.pack = pack;
+    if (s_q) xQueueSend(s_q, &r, 0);
+
+    /* 4-bit ADPCM: one byte is TWO samples. The stage pitch resamples, so a
+     * lower-pitched stage plays for proportionally longer - divide by it or
+     * an Adult sweep would talk over itself. */
+    const float samples = (float)len * 2.0f;
+    const float secs = samples / (float)voice_rate() / stage_pitch();
+    return (uint32_t)(secs * 1000.0f);
+}
+
 void audio_say(const char *text)
 {
     if (!s_ready || s_vol == VOL_MUTE || !text || !*text) return;
