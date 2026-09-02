@@ -1,71 +1,64 @@
-# Visitor
+# Visitor 👾
 
-A virtual pet for the **Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2)**.
+**Visitor** is a virtual pet for the **Waveshare ESP32-S3-Touch-AMOLED-1.8 V2**.
 
-A small creature arrives from somewhere else, stays with you for a week or
-two, and then goes home. While it is here you feed it, clean up after it,
-put it to bed, play four games with it, and tell it off when it misbehaves.
-It grows through four life stages, develops a personality, remembers what
-happened, talks to you in a recorded voice, and leaves you a handwritten note
-when it goes.
+A little creature arrives to stay with you. Feed it, play games, clean up after it, help it sleep, and teach it how to behave. As time passes, Visitor grows from Baby → Kid → Teen → Adult and develops its own personality, favorite game, habits, memories, and evolution form.
 
-It is built for a child. That constraint drives most of the design decisions
-in this repository: large touch targets, no reading required for the core
-loop, nothing that scolds, and a departure that is a consequence rather than
-a punishment.
+Eventually every Visitor goes home — but its visit is remembered, and future Visitors may even have heard about the ones that came before.
 
-> **Status: pre-release.** The current recommended build is
-> [`v1.0.0-pre.2`](../../releases/tag/v1.0.0-pre.2). See
-> [Known limitations](#known-limitations) — they are real and listed honestly.
+> **Status:** Pre-release  
+> **Recommended version:** `v1.0.0-pre.2`
 
----
+## Features
+
+- 12 evolution forms
+- Real-time aging — **1 real day = 1 Visitor year**
+- Persistent RTC-based life while powered off
+- Boy / Girl / Surprise identity
+- Multiple personalities and care-driven behavior
+- Hunger, happiness, cleanliness, discipline, energy, and weight
+- Daytime naps and nighttime sleep
+- Dreams and a personal Journal
+- Dynamic favorite games that can change over time
+- Four built-in games:
+  - Higher / Lower
+  - Reaction / Tag
+  - Memory
+  - Tilt Maze
+- Gravity, shake, and upside-down reactions
+- Piper Boy and Girl voice packs
+- Battery percentage display
+- Visit Records and personalized farewells
+- No death mechanic — neglected Visitors may become grumpy, scruffy, mischievous, or chonky, but never die
 
 ## Hardware
 
-| | |
-|---|---|
-| Board | Waveshare ESP32-S3-Touch-AMOLED-1.8 **V2** |
-| Display | 368 x 448 AMOLED, CO5300 over QSPI |
-| Touch | CST820 |
-| Audio | ES8311 codec + speaker |
-| IMU | QMI8658 |
-| RTC | PCF85063A |
-| PMIC | AXP2101 |
-| Flash | 16 MB, custom partition table (no OTA) |
+Designed specifically for:
 
-**V2 specifically.** The V1 board uses different parts (a different display
-controller and touch IC) and this firmware will not run on it. The pin map,
-display geometry, touch transform and IMU axis mapping in
-`include/board_pins.h` are verified against real hardware and carry a FROZEN
-banner — do not change them without a reproducible hardware failure.
+**Waveshare ESP32-S3-Touch-AMOLED-1.8 V2**
 
-## Building
+- ESP32-S3R8
+- 368×448 AMOLED
+- CO5300 display controller
+- CST820 touch
+- QMI8658 IMU
+- PCF85063A RTC
+- ES8311 audio codec
+- AXP2101 PMIC
+- 16 MB flash / 8 MB PSRAM
+
+**The V1 board is not supported.**
+
+## Build & Flash
 
 Requires [PlatformIO](https://platformio.org/).
 
 ```bash
-git clone <this repo>
+git clone https://github.com/beekeeper7278/visitor-tamagotchi.git
 cd visitor-tamagotchi
-pio run                 # build
-pio run -t upload       # flash the firmware over USB
-```
 
-That is enough to get a running Visitor with the procedural chirp voice.
-
-### The voice packs (optional but recommended)
-
-The Visitor speaks recorded lines. The packs are ~4 MB each, are generated
-artifacts, and are **deliberately not in git** — they are fully reproducible
-from the build script plus two public-domain Piper models. Without them the
-firmware falls back to a procedural chirp voice, which is a supported
-degraded mode rather than a failure.
-
-To build and flash them, follow
-[`tools/voicepack/README.md`](tools/voicepack/README.md), then:
-
-```bash
-pio run -t uploadfs     # ~80 s; does NOT touch NVS, so the pet survives
-```
+pio run
+pio run -t upload```
 
 ### Flashing rules worth knowing
 
