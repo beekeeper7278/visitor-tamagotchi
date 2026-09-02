@@ -859,21 +859,29 @@
  * still compose exactly as they did. The `>` report's percentage table is
  * byte-for-byte the same before and after; only the cadence and gap move.
  *
- * ONE HALVING, NOT TWO - AND THE DIAL COMPOUNDS.
+ * THE DIAL IS RELATIVE, AND IT COMPOUNDS. Read the CURRENT value before
+ * turning it. Settled in three steps:
  *
- * 100 -> 50 halved the Phase 9.5 rate, which is the whole of the requested
- * reduction. A later pass very nearly took it 50 -> 25 on a second "halve
- * it", which would have left it at a QUARTER of the original. Worth stating
- * out loud because the instruction sounds the same both times and the dial
- * is relative: read the CURRENT value before turning it, and if the target
- * is "half the original rate", that target is 50 and it is already met.
+ *     100  the Phase 9.5 rate
+ *      50  halved once - the whole of the "reduce by 50%" request. A later
+ *          pass came within a flash of reading that as a fresh instruction
+ *          and going 50 -> 25, which would have left a QUARTER of the
+ *          original rather than the half asked for.
+ *      40  final. 40% of the original frequency, i.e. 60% below it, and 20%
+ *          below the 50 it replaced.
  *
- * NOT MADE TO DISAPPEAR, measured on hardware:
+ * Frequency is LINEAR in this dial, which is what makes that arithmetic
+ * trustworthy: both terms of T scale by 100/RATE together, so the interval
+ * is exactly 2.5x the original and 1.25x the 50 setting for EVERY Visitor,
+ * whatever its personality or history. At 40 the cadence is 37.5 s and the
+ * gap 2.5-7.5 min.
  *
- *     Kid    7.3 min (8.2/h)      neglected Kid     5.1 min (11.7/h)
- *     Baby   8.0 min (7.5/h)      average Kid       7.3 min ( 8.2/h)
- *     Teen   9.8 min (6.1/h)      well-raised Kid  28.5 min ( 2.1/h)
- *     Adult 13.5 min (4.4/h)
+ * NOT MADE TO DISAPPEAR, measured:
+ *
+ *     Kid   11.3 min (5.3/h)      neglected Kid     6.4 min (9.4/h)
+ *     Baby  13.3 min (4.5/h)      average Kid       9.2 min (6.5/h)
+ *     Teen  16.9 min (3.6/h)      well-raised Kid  35.6 min (1.7/h)
+ *     Adult 25.2 min (2.4/h)
  *
  * The modifiers still bite hard - 31% per roll for a neglected Visitor
  * against 2% for a well-raised, tidy, shy one, a 5.6x spread in interval -
@@ -881,7 +889,7 @@
  *
  * Turn this only with the same figures in front of you; `>` prints them
  * live for the Visitor actually on the device. */
-#define MISCHIEF_RATE_PCT       50
+#define MISCHIEF_RATE_PCT       40
 
 /* A zero here divides by zero in the three derived values below, and would
  * do it silently in the preprocessor. Guarded rather than trusted. */

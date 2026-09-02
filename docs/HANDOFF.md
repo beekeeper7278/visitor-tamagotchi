@@ -7,7 +7,9 @@ Updated 2026-09-01 for the v1.0.0 pre-release — see §0, §1 and §2f.
 
 ## 0. Status
 
-**v1.0.0-pre.1 IS TAGGED.** The sweep's gameplay and audio work is complete
+**v1.0.0-pre.2 IS TAGGED.** (`pre.1` was the same build with the discipline
+dial at 50; `pre.2` moves it to its final 40. `pre.1` is left where it is
+rather than force-moved - a pushed tag is a fixed point.) The sweep's gameplay and audio work is complete
 and accepted on hardware; the tag marks that known-good state. It is a
 PRE-release: `v1.0.0` itself is still not tagged and `main` is still not
 merged, and both need asking for.
@@ -23,9 +25,8 @@ Committed and pushed on `wip/phase8-9-pacing`, and flashed:
   plus two audio-quality defects fixed (§2i). **ACCEPTED on hardware** -
   both packs played end to end and the voices were confirmed good. Do not
   change the voices further without being asked.
-- discipline frequency confirmed at MISCHIEF_RATE_PCT 50, i.e. half the
-  original Phase 9.5 rate, which was the whole of the requested reduction
-  (§2g)
+- discipline frequency settled at MISCHIEF_RATE_PCT 40 - 60% below the
+  original Phase 9.5 rate and 20% below the 50 it replaced (§2g)
 
 **Test 1 of the six PASSES on hardware** — see §9, which carries the
 measurement. The rest are still outstanding, and under the phase gate that
@@ -53,7 +54,7 @@ Phase 9.5 remains COMPLETE and ACCEPTED, tagged `phase9.5-polish-baseline`.
 | Pacing & balance pass | COMPLETE, tagged `pacing-balance-baseline` |
 | 9.5 Personality / dreams / identity / refinement | COMPLETE, tagged `phase9.5-polish-baseline` |
 | **10 IMU personality, tilt calibration, audio, voice** | **COMPLETE, tagged `phase10-feature-baseline`** |
-| **v1 bug sweep / v1.0.0 pre-release** | **TAGGED `v1.0.0-pre.1`** |
+| **v1 bug sweep / v1.0.0 pre-release** | **TAGGED `v1.0.0-pre.2`** |
 
 Nothing is outstanding for Phase 10.
 
@@ -843,16 +844,17 @@ real per-roll figures this build produces:
     double cadence   1.25x .. 1.93x
     BOTH             2.00x for every p, exactly
 
-**ONE HALVING, NOT TWO - THE DIAL COMPOUNDS.** A later pass came within a
-flash of taking this 50 -> 25 on a second "halve it", which would have left
-the rate at a QUARTER of the original rather than the half that was asked
-for. The instruction sounds identical both times and the dial is RELATIVE, so
-read the current value before turning it: if the target is "half the original
-rate", that target is 50 and it is already met. The 25 build was flashed,
-measured and reverted; the numbers it produced are in the config.h comment as
-a record of what the next step down actually costs (a very calm Adult drops
-to one opportunity every 1.8 hours, which is the point where the quiet end of
-the mechanic starts to vanish).
+**THE DIAL IS RELATIVE AND IT COMPOUNDS.** Settled in three steps: 100 (the
+Phase 9.5 rate), 50 (halved once - the whole of the "reduce by 50%" request),
+40 (final). A pass between the second and third came within a flash of
+reading "halve it" as a fresh instruction and going 50 -> 25, which would
+have left a QUARTER of the original rather than the half asked for. Read the
+CURRENT value before turning it.
+
+Frequency is LINEAR in this dial, which is what makes the arithmetic
+trustworthy: both terms of T scale by 100/RATE together, so at 40 the
+interval is exactly 2.5x the original and 1.25x the 50 setting for EVERY
+Visitor, whatever its personality or history.
 
 So the dial multiplies the cadence and the gap together and leaves
 `mischief_pct()` alone. **Every function in `discipline.cpp` outside
@@ -877,12 +879,14 @@ against both real readings shows the modifiers biting hard across the range:
 A 5.6x spread in interval between a neglected Visitor and a well-raised one,
 so care still visibly changes behaviour and a good history still calms.
 
-Confirmed on hardware, same Visitor, before and after (`>`):
+Confirmed on hardware at the final 40 (`>`), against the original 100:
 
-    Kid    weight 100%   9% per roll   4.5 -> 9.1 min   (6.6/hour)
-    Baby   weight  85%   7%            5.3 -> 10.6 min  (5.6/hour)
-    Teen   weight  62%   5%            6.8 -> 13.5 min  (4.4/hour)
-    Adult  weight  40%   3%           10.1 -> 20.2 min  (3.0/hour)
+    Kid    weight 100%   9% per roll   4.5 -> 11.3 min  (5.3/hour)
+    Baby   weight  85%   7%            5.3 -> 13.3 min  (4.5/hour)
+    Teen   weight  62%   5%            6.8 -> 16.9 min  (3.6/hour)
+    Adult  weight  40%   3%           10.1 -> 25.2 min  (2.4/hour)
+
+    cadence 15 s -> 37.5 s     gap 60-180 s -> 150-450 s
 
 The percentages are byte-identical before and after, which is the evidence
 that the ordering (Kid > Baby > Teen > Adult), the personality modifiers and
@@ -1411,9 +1415,9 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
     POOP_COMMENT_GAP_MS 300000  POOP_COMMENT_CHANCE_PCT 45
 
     MISCHIEF_W_BABY/KID/TEEN/ADULT   85 / 100 / 62 / 40
-    MISCHIEF_RATE_PCT 50             the ONE frequency dial; 100 = 9.5 rate
-    MISCHIEF_CHECK_BASE_MS 15000     -> effective 30000 at 50%
-    MISCHIEF_GAP_MIN/MAX_BASE_MS     60000 / 180000 -> 120000 / 360000
+    MISCHIEF_RATE_PCT 40             the ONE frequency dial; 100 = 9.5 rate
+    MISCHIEF_CHECK_BASE_MS 15000     -> effective 37500 at 40%
+    MISCHIEF_GAP_MIN/MAX_BASE_MS     60000 / 180000 -> 150000 / 450000
     MISCHIEF_BASE_PCT_9_5 14         (unchanged by the dial, deliberately)
     MISCHIEF_SETTLE_HATCH_MS 120000  _BOOT_MS 60000
 
@@ -1429,15 +1433,16 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
     BATTERY_EMA 1/4 on mV      BATTERY_HYST_PCT 2
     BATTERY_CURVE              20 anchor points, piecewise linear
 
-Spontaneous mischief was HALVED in the v1.0.0 pre-release (§2g). The dial
+Spontaneous mischief was cut to 40% of the Phase 9.5 rate in the v1.0.0
+pre-release (§2g). The dial
 scales the SCHEDULE only; `mischief_pct()` is byte-identical, so the whole
 percentage table and every relative behaviour are untouched. Measured on
 hardware, same Visitor before and after:
 
-    Kid    9% per roll   4.5 -> 9.1 min    (6.6/hour)
-    Baby   7%            5.3 -> 10.6 min   (5.6/hour)
-    Teen   5%            6.8 -> 13.5 min   (4.4/hour)
-    Adult  3%           10.1 -> 20.2 min   (3.0/hour)
+    Kid    9% per roll   4.5 -> 11.3 min   (5.3/hour)
+    Baby   7%            5.3 -> 13.3 min   (4.5/hour)
+    Teen   5%            6.8 -> 16.9 min   (3.6/hour)
+    Adult  3%           10.1 -> 25.2 min   (2.4/hour)
     LEARN_START 50.0  LEARN_ALPHA 0.22  LEARN_WEIGHT_PCT 60
 
 ## 8. Known bugs / open issues
