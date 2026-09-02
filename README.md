@@ -139,9 +139,12 @@ Stated plainly, because a pre-release that hides them is not useful:
 
 ## Licence
 
-**No licence has been chosen yet.** Until a `LICENSE` file is added, default
-copyright applies and no permissions are granted for reuse. This needs
-resolving before the project is genuinely usable by anyone else.
+[MIT](LICENSE). Build it, modify it, learn from it, redistribute your own
+version — commercially or otherwise. Keep the copyright notice with it, and
+understand it comes with no warranty.
+
+The voice models it uses were chosen to match: both are trained on
+public-domain LibriVox recordings, so a pack you build is yours to ship.
 
 ## Credits
 
