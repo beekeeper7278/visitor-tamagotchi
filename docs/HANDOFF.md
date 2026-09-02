@@ -7,7 +7,11 @@ Updated 2026-09-01 for the v1.0.0 pre-release — see §0, §1 and §2f.
 
 ## 0. Status
 
-**The v1 release-candidate bug sweep has STARTED and is IN PROGRESS.**
+**v1.0.0-pre.1 IS TAGGED.** The sweep's gameplay and audio work is complete
+and accepted on hardware; the tag marks that known-good state. It is a
+PRE-release: `v1.0.0` itself is still not tagged and `main` is still not
+merged, and both need asking for.
+
 Committed and pushed on `wip/phase8-9-pacing`, and flashed:
 
 - `c0603c7` four defects found by the sweep (§2f)
@@ -16,7 +20,12 @@ Committed and pushed on `wip/phase8-9-pacing`, and flashed:
 - four polish items: dynamic favourite game, the stale-Sleepy fix, a
   sleeping Visitor refusing all food, and a battery indicator (§2h)
 - complete Piper voice coverage: 304 -> 321 lines, both packs at 100%,
-  plus two audio-quality defects fixed (§2i)
+  plus two audio-quality defects fixed (§2i). **ACCEPTED on hardware** -
+  both packs played end to end and the voices were confirmed good. Do not
+  change the voices further without being asked.
+- discipline frequency confirmed at MISCHIEF_RATE_PCT 50, i.e. half the
+  original Phase 9.5 rate, which was the whole of the requested reduction
+  (§2g)
 
 **Test 1 of the six PASSES on hardware** — see §9, which carries the
 measurement. The rest are still outstanding, and under the phase gate that
@@ -44,7 +53,7 @@ Phase 9.5 remains COMPLETE and ACCEPTED, tagged `phase9.5-polish-baseline`.
 | Pacing & balance pass | COMPLETE, tagged `pacing-balance-baseline` |
 | 9.5 Personality / dreams / identity / refinement | COMPLETE, tagged `phase9.5-polish-baseline` |
 | **10 IMU personality, tilt calibration, audio, voice** | **COMPLETE, tagged `phase10-feature-baseline`** |
-| **v1 bug sweep / v1.0.0 pre-release** | **IN PROGRESS — committed and flashed, NOT yet accepted on hardware** |
+| **v1 bug sweep / v1.0.0 pre-release** | **TAGGED `v1.0.0-pre.1`** |
 
 Nothing is outstanding for Phase 10.
 
@@ -834,6 +843,17 @@ real per-roll figures this build produces:
     double cadence   1.25x .. 1.93x
     BOTH             2.00x for every p, exactly
 
+**ONE HALVING, NOT TWO - THE DIAL COMPOUNDS.** A later pass came within a
+flash of taking this 50 -> 25 on a second "halve it", which would have left
+the rate at a QUARTER of the original rather than the half that was asked
+for. The instruction sounds identical both times and the dial is RELATIVE, so
+read the current value before turning it: if the target is "half the original
+rate", that target is 50 and it is already met. The 25 build was flashed,
+measured and reverted; the numbers it produced are in the config.h comment as
+a record of what the next step down actually costs (a very calm Adult drops
+to one opportunity every 1.8 hours, which is the point where the quiet end of
+the mechanic starts to vanish).
+
 So the dial multiplies the cadence and the gap together and leaves
 `mischief_pct()` alone. **Every function in `discipline.cpp` outside
 `discipline_report()` is byte-identical** — fair/unfair logic, rewards and
@@ -841,6 +861,21 @@ penalties, mischief types, the learned-behaviour EMA and the evolution
 history effects were all verified unchanged by diffing the functions, not by
 inspection. The only functional change in the build is three derived
 constants in `config.h`.
+
+Re-confirmed on hardware at the pre-release, on a Visitor with a completely
+different history (discipline 100, tendency 85, learned 22.1) from the one
+first measured (45 / 20 / 50.0). BOTH report 9% per roll - which looked at
+first like the modifiers had stopped working, and is arithmetic: +10 tendency,
+-8 discipline, -3 learned history, -4 tidy trait, on a base of 14, is 9 from
+either direction. Replicating `mischief_pct()` exactly and validating it
+against both real readings shows the modifiers biting hard across the range:
+
+    neglected, no discipline    31% per roll   one every  5.1 min (11.7/h)
+    average                     13%            one every  7.3 min ( 8.2/h)
+    well-raised, tidy + shy      2%            one every 28.5 min ( 2.1/h)
+
+A 5.6x spread in interval between a neglected Visitor and a well-raised one,
+so care still visibly changes behaviour and a good history still calms.
 
 Confirmed on hardware, same Visitor, before and after (`>`):
 
@@ -1568,6 +1603,14 @@ hardware, same Visitor before and after:
    `pet_state.games_played`, which only games.cpp increments).
 
 ## 9. Exact next steps
+
+0. **PUBLISHING: `main` IS 18 COMMITS BEHIND AND SHOWS ALMOST NOTHING.**
+   It sits at `e8726d0`, a commit whose entire content is a handoff document -
+   no games, no Phase 8/9/10, none of the v1.0.0 work. Anyone landing on the
+   GitHub default branch today sees a doc and no project. `main` IS a strict
+   ancestor of `wip/phase8-9-pacing`, so a fast-forward is clean and loses
+   nothing. NOT DONE - merging and repository visibility are the user's call
+   and were explicitly reserved.
 
 1. **VERIFY `311f2b9` ON HARDWARE. This is the blocking item.** Six tests,
    from the user's own report. `TAB a` before and after each gives the

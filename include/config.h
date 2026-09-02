@@ -859,13 +859,28 @@
  * still compose exactly as they did. The `>` report's percentage table is
  * byte-for-byte the same before and after; only the cadence and gap move.
  *
- * Halving also returns the cadence to 30 s, which was the pre-9.5 value, so
- * it is a proven number rather than a new one.
+ * ONE HALVING, NOT TWO - AND THE DIAL COMPOUNDS.
  *
- * NOT MADE TO DISAPPEAR. At 50 the mean interval is Kid 9.1 min, Baby 10.6,
- * Teen 13.5, Adult 20.2 - so even the calmest stage still offers about three
- * opportunities an hour. Turn this down further only with the same figures
- * in front of you; `>` prints them live. */
+ * 100 -> 50 halved the Phase 9.5 rate, which is the whole of the requested
+ * reduction. A later pass very nearly took it 50 -> 25 on a second "halve
+ * it", which would have left it at a QUARTER of the original. Worth stating
+ * out loud because the instruction sounds the same both times and the dial
+ * is relative: read the CURRENT value before turning it, and if the target
+ * is "half the original rate", that target is 50 and it is already met.
+ *
+ * NOT MADE TO DISAPPEAR, measured on hardware:
+ *
+ *     Kid    7.3 min (8.2/h)      neglected Kid     5.1 min (11.7/h)
+ *     Baby   8.0 min (7.5/h)      average Kid       7.3 min ( 8.2/h)
+ *     Teen   9.8 min (6.1/h)      well-raised Kid  28.5 min ( 2.1/h)
+ *     Adult 13.5 min (4.4/h)
+ *
+ * The modifiers still bite hard - 31% per roll for a neglected Visitor
+ * against 2% for a well-raised, tidy, shy one, a 5.6x spread in interval -
+ * so care still visibly changes behaviour and a good history still calms.
+ *
+ * Turn this only with the same figures in front of you; `>` prints them
+ * live for the Visitor actually on the device. */
 #define MISCHIEF_RATE_PCT       50
 
 /* A zero here divides by zero in the three derived values below, and would
