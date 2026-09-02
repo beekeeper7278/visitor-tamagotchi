@@ -38,6 +38,35 @@
 #define RATE_ENERGY_AWAKE       (-5.0f)
 #define RATE_ENERGY_SLEEP_DARK  (12.0f)
 #define RATE_ENERGY_SLEEP_LIT   (6.0f)
+
+/* --- SLEEPY, AND WHAT FINISHING A SLEEP HAS TO CLEAR [v1.0.0 pre-release]
+ * ENERGY_SLEEPY_BELOW was a bare 20.0f inside pet_mood(). It is named here
+ * because a second piece of code now has to agree with it, and two magic
+ * numbers that must match are two numbers that will eventually not.
+ *
+ * THE BUG IT FIXES. Mood is a pure function of state - Sleepy IS
+ * `energy < ENERGY_SLEEPY_BELOW`, with no latch anywhere - so a Visitor that
+ * still read as Sleepy after a nap was not holding a stale flag. It had
+ * genuinely not recovered: the nap window is ONE hour (13:00-14:00), and one
+ * hour restores at most RATE_ENERGY_SLEEP_DARK = 12 points, or 6 with the
+ * light left on. A Visitor that went down below 8 (dark) or below 14 (lit) -
+ * which is exactly where a long absence at RATE_ENERGY_AWAKE leaves it -
+ * therefore woke up, stretched, said a wake line, and was still under the
+ * threshold. Everything downstream was correct and the Visitor was still
+ * Sleepy, which is not what "had a nap" should mean.
+ *
+ * So a sleep period that actually delivered rest now guarantees a rested
+ * FLOOR. It is a floor, never a set: a Visitor that slept a full night is
+ * already near 100 and is not dragged down to 35.
+ *
+ * SLEEP_RESTED_MIN_SEC is what counts as real rest. It matches
+ * DREAM_MIN_NAP_SEC deliberately - the same "this was a proper sleep, not a
+ * thirty-second blink" judgement the dream rules make - but is its own
+ * constant because the two answer different questions and either may be
+ * retuned without the other. */
+#define ENERGY_SLEEPY_BELOW     20.0f   /* pet_mood() -> MOOD_SLEEPY        */
+#define ENERGY_RESTED_FLOOR     35.0f   /* clearly above it, with margin    */
+#define SLEEP_RESTED_MIN_SEC    (20L * 60L)
 #define RATE_CLEAN_AWAKE        (-2.0f)
 #define RATE_CLEAN_ASLEEP       (-1.0f)
 #define RATE_DISCIPLINE         (-0.5f)
@@ -653,6 +682,121 @@
  * on purpose: this is a gag, and a gag repeated every minute is nagging. */
 #define POOP_COMMENT_GAP_MS     300000UL   /* five minutes, minimum         */
 #define POOP_COMMENT_CHANCE_PCT 45         /* rolled once per gap           */
+
+/* --- BATTERY INDICATOR [v1.0.0 pre-release] -----------------------------
+ * MEASURED, not estimated. The AXP2101 at 0x34 carries a 14-bit VBAT ADC at
+ * registers 0x34/0x35, and a read-only probe on THIS board (TAB P) found
+ * its ADC enable register 0x30 reading 0x03 - i.e. the VBAT channel is
+ * ALREADY ON, enabled by the board's own bring-up and not by us. That is the
+ * whole reason this feature is allowed to exist here: board_pins.h (E)
+ * forbids ever writing to the PMIC, and we do not have to.
+ *
+ *     probe result: chip ID 0x4A, ADC enable 0x03, VBAT 4058 mV, gauge 100%
+ *
+ * VBAT is used rather than the fuel-gauge register 0xA4 because the gauge's
+ * calibration for this pack is unknown, while a cell voltage is a physical
+ * quantity that means the same thing on every 1S LiPo.
+ *
+ * THE CURVE. A LiPo's voltage-to-charge relationship is emphatically not
+ * linear: it falls off a cliff at both ends and is nearly flat through the
+ * middle, so a straight line from 3.0 V to 4.2 V would read ~50% for most of
+ * a discharge and then collapse. These are the standard light-load anchor
+ * points, interpolated piecewise between them. Approximate BY DESIGN - this
+ * is a "roughly how much is left" indicator, not a gas gauge.
+ *
+ * Format is {millivolts, percent}, highest first. */
+#define BATTERY_CURVE { \
+    {4200,100},{4150, 95},{4100, 90},{4050, 85},{4000, 80},{3950, 73}, \
+    {3900, 66},{3850, 59},{3800, 52},{3750, 45},{3700, 38},{3650, 31}, \
+    {3600, 24},{3550, 18},{3500, 12},{3450,  8},{3400,  5},{3350,  3}, \
+    {3300,  1},{3000,  0} }
+
+/* Plausibility. A reading outside this is not a battery and must never be
+ * shown - a wrong number is worse than no number. */
+#define BATTERY_MV_MIN          2500
+#define BATTERY_MV_MAX          4500
+
+/* SLOW. The panel, the radio and the simulation all matter more than this
+ * does; 30 s is far more often than a battery can meaningfully change and
+ * still nothing next to a 1 s tick. */
+#define BATTERY_POLL_MS         30000UL
+
+/* Smoothing, so the number does not dance. The EMA is on MILLIVOLTS (the
+ * physical quantity) rather than on the percentage, because the curve is
+ * steep at the ends and averaging percentages there would distort it. The
+ * deadband is then applied to the percentage: the displayed value only moves
+ * once the computed one has drifted this far, which stops a cell sitting on
+ * a boundary from flickering between two numbers forever. */
+#define BATTERY_EMA_NUM         1       /* new sample weight = NUM/DEN      */
+#define BATTERY_EMA_DEN         4
+#define BATTERY_HYST_PCT        2
+
+/* --- THE FAVOURITE GAME [v1.0.0 pre-release] ----------------------------
+ * The Visitor always has exactly ONE favourite among the four games, it is
+ * chosen by personality-weighted chance rather than by counting plays, and
+ * it can change when the Visitor gets bored of it.
+ *
+ * WHY NOT MOST-PLAYED. gamerec_favorite() used to return whichever game had
+ * the highest play count, which made the "favourite" a readout of the
+ * PLAYER's habit rather than a trait of the Visitor. It could also be NONE,
+ * it never surprised anyone, and two Visitors with identical personalities
+ * were guaranteed the same answer. It is now real state: rolled once, then
+ * persisted, and only ever changed by boredom.
+ *
+ * SELECTION. Every game starts at FAV_W_BASE and each of the Visitor's two
+ * traits adds its row below. The result is floored at FAV_W_MIN so no game
+ * is ever impossible - personality has to move the odds a long way without
+ * ever making the outcome certain, which is what keeps two Visitors with the
+ * same pair of traits from being guaranteed the same favourite.
+ *
+ * The rows are the obvious reading of each trait against what each game
+ * actually asks of the player: HiLo is a guess, Reaction is speed, Memory is
+ * concentration, Tilt Maze is physical.
+ *
+ *                             HiLo  React  Memory  Maze                   */
+#define FAV_W_PLAYFUL       {    0,    40,    -20,    60 }
+#define FAV_W_SLEEPY        {   40,   -40,     30,   -40 }
+#define FAV_W_DRAMATIC      {   40,    40,    -20,     0 }
+#define FAV_W_TIDY          {    0,   -20,     70,   -20 }
+#define FAV_W_MISCHIEVOUS   {    0,    40,    -30,    70 }
+#define FAV_W_FOODIE        {   50,     0,      0,   -20 }
+#define FAV_W_COMPETITIVE   {   20,    70,     20,     0 }
+#define FAV_W_CURIOUS       {   70,     0,     40,    20 }
+#define FAV_W_SHY           {   30,   -40,     50,   -20 }
+
+#define FAV_W_BASE          100    /* every game starts here               */
+#define FAV_W_MIN           15     /* ...and can never be driven below it  */
+
+/* BOREDOM, in hundredths of a play, so the thresholds can be read as plays.
+ * FAV_BORE_PER_PLAY is one play of the favourite; the target is drawn per
+ * favourite in [FAV_BORE_TARGET_MIN, FAV_BORE_TARGET_MAX], i.e. 4 to 7
+ * plays, so the switch is never predictable and never happens after one or
+ * two. It is redrawn every time the favourite changes.
+ *
+ * TWO THINGS UNDO IT, because "played it to death" has to be distinguishable
+ * from "plays it a lot among other things":
+ *
+ *   playing something else   FAV_BORE_PER_OTHER, deliberately MORE than one
+ *                            play adds - so alternating between games can
+ *                            never accumulate boredom at all, however long
+ *                            it goes on
+ *   time                     FAV_BORE_DECAY_PER_HOUR, off the RTC, so a
+ *                            Visitor left alone comes back to its favourite
+ *
+ * Both are persisted (in the gamerec record, with the decay anchored to an
+ * RTC stamp) so a reboot cannot reset boredom and farm the bonus. */
+#define FAV_BORE_PER_PLAY        100
+#define FAV_BORE_PER_OTHER       150
+#define FAV_BORE_DECAY_PER_HOUR   25
+#define FAV_BORE_TARGET_MIN      400    /* 4 plays */
+#define FAV_BORE_TARGET_MAX      700    /* 7 plays */
+
+/* The reward for playing the favourite. A HAPPINESS multiplier only: it is
+ * applied to the same term the repeat-play penalty already multiplies, so it
+ * composes with it and CANNOT reach the score or the high score - those are
+ * recorded before any multiplier is involved. Modest on purpose; the point
+ * is a nice moment, not an optimal strategy. */
+#define FAV_BONUS_PCT             25
 
 /* --- Discipline opportunities [PHASE 9.5] -------------------------------
  * Spontaneous mischief is now STAGE-WEIGHTED and HISTORY-AWARE.

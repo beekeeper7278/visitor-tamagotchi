@@ -502,7 +502,10 @@ static void build_journal(lv_obj_t *p)
     c = jcard(sc, "Favourites", &y, 0xF2C14E);
     snprintf(b, sizeof(b), "Food: %s\nGame: %s",
              evolve_food_name(evolve_favourite_food()),
-             g->total_games ? gamerec_name(gamerec_favorite()) : "still deciding");
+             /* Always a real answer now: the favourite is chosen from
+              * personality at the hatch, not inferred from a play count that
+              * is zero until the first game. */
+             gamerec_name(gamerec_favorite()));
     jbody(c, b);
     lv_obj_update_layout(c); y += lv_obj_get_height(c) + 10;
 

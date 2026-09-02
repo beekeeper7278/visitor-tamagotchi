@@ -4,6 +4,7 @@
 #include <lvgl.h>
 
 #include "board_pins.h"
+#include "bsp.h"
 #include "config.h"
 #include "ui_pet.h"
 #include "ui_bubble.h"
@@ -78,6 +79,7 @@ static lv_obj_t *s_btn_menu;
 static lv_obj_t *s_egg_btn, *s_egg_lbl, *s_egg_btn_lbl;
 static lv_obj_t *s_date_btn, *s_date_val;
 static lv_obj_t *s_dim, *s_zlayer;
+static lv_obj_t *s_bat_box, *s_bat_fill, *s_bat_lbl;
 static lv_obj_t *s_swatch[EGG_PALETTE_COUNT + 1];
 static lv_obj_t *s_gender_btn[3];
 static lv_obj_t *s_reveal, *s_reveal_lbl;   /* the "It's a boy/girl!" banner */
@@ -381,6 +383,7 @@ void scr_main_egg_refresh(void)
 
     ui_pet_set_egg(is_egg, egg_display_palette(p));
     const bool choosing = is_egg && !p->egg_hatch_ts;
+    scr_main_battery_refresh(choosing);
     if (s_egg_btn) show_obj(s_egg_btn, choosing);
     if (s_egg_lbl) show_obj(s_egg_lbl, is_egg);
 
@@ -601,6 +604,59 @@ void scr_main_create(void)
     lv_obj_set_style_radius(s_hud_mood, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_opa(s_hud_mood, LV_OPA_70, 0);
     lv_obj_clear_flag(s_hud_mood, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    /* --- BATTERY, top-left, beside the mood dot ------------------------
+     * PLACEMENT, chosen against everything already on this screen rather
+     * than by eye:
+     *
+     *   mood dot     x  16.. 28, y 16..28   - this starts at x 40, clear
+     *   menu handle  x 316..360, y  8..52   - far side of the panel
+     *   the Visitor  y 150..310             - nowhere near
+     *   bubbles      anchored to the Visitor, below this row
+     *   reveal       y 330..404
+     *
+     * It is also HIDDEN while the pre-hatch selectors are up, because that
+     * screen puts its instruction label across this row - see
+     * scr_main_egg_refresh(). Nothing here is clickable, so it can never eat
+     * a touch intended for something else.
+     *
+     * Drawn from primitives (a rounded outline, a fill bar and a nub) rather
+     * than a font glyph or an image, like the menu handle above it. */
+    s_bat_box = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(s_bat_box);
+    lv_obj_set_size(s_bat_box, 24, 13);
+    lv_obj_set_pos(s_bat_box, 40, 16);
+    lv_obj_set_style_radius(s_bat_box, 3, 0);
+    lv_obj_set_style_border_color(s_bat_box, lv_color_hex(0x8890A0), 0);
+    lv_obj_set_style_border_width(s_bat_box, 1, 0);
+    lv_obj_set_style_border_opa(s_bat_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(s_bat_box, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(s_bat_box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_bat_box, LV_OBJ_FLAG_HIDDEN);   /* until a real reading */
+    {
+        lv_obj_t *nub = lv_obj_create(s_bat_box);
+        lv_obj_remove_style_all(nub);
+        lv_obj_set_size(nub, 2, 5);
+        lv_obj_set_pos(nub, 24, 4);
+        lv_obj_set_style_bg_color(nub, lv_color_hex(0x8890A0), 0);
+        lv_obj_set_style_bg_opa(nub, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(nub, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+        s_bat_fill = lv_obj_create(s_bat_box);
+        lv_obj_remove_style_all(s_bat_fill);
+        lv_obj_set_size(s_bat_fill, 18, 7);
+        lv_obj_set_pos(s_bat_fill, 2, 2);
+        lv_obj_set_style_radius(s_bat_fill, 1, 0);
+        lv_obj_set_style_bg_color(s_bat_fill, lv_color_hex(0x60D0A0), 0);
+        lv_obj_set_style_bg_opa(s_bat_fill, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(s_bat_fill, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    }
+
+    s_bat_lbl = lv_label_create(s_scr);
+    lv_label_set_text(s_bat_lbl, "");
+    lv_obj_set_style_text_color(s_bat_lbl, lv_color_hex(0x8890A0), 0);
+    lv_obj_set_pos(s_bat_lbl, 68, 13);
+    lv_obj_add_flag(s_bat_lbl, LV_OBJ_FLAG_HIDDEN);
 
     /* btn_menu: a permanent on-screen handle. SPEC section 4 is explicit that
      * touch-only must be a complete path - a small kid will never find a
@@ -862,6 +918,39 @@ lv_obj_t *scr_main_room(void) { return s_room_layer; }
 
 /* Mood -> colour. Deliberately low-contrast against true black: this is a
  * peripheral cue, not a readout. */
+/* Reads CACHED values only - bsp_battery_tick() does the I2C work on its own
+ * BATTERY_POLL_MS schedule, so running this once a second costs nothing.
+ * `choosing` hides it: the pre-hatch screen writes its instruction label
+ * across this row. */
+void scr_main_battery_refresh(bool choosing)
+{
+    if (!s_bat_box || !s_bat_lbl) return;
+
+    const bool show = bsp_battery_valid() && !choosing;
+    show_obj(s_bat_box, show);
+    show_obj(s_bat_lbl, show);
+    if (!show) return;
+
+    const uint8_t pct = bsp_battery_pct();
+    char b[8];
+    snprintf(b, sizeof(b), "%u%%", (unsigned)pct);
+    lv_label_set_text(s_bat_lbl, b);
+
+    /* The fill tracks the percentage across the 18 px interior, with a 2 px
+     * floor so "nearly empty" still reads as a battery rather than as an
+     * empty outline that looks broken. */
+    lv_coord_t w = (lv_coord_t)((18 * pct + 50) / 100);
+    if (w < 2) w = 2;
+    lv_obj_set_width(s_bat_fill, w);
+
+    /* Deliberately muted until it matters: this is a peripheral readout on a
+     * child's toy, not a warning light, and it must not compete with the
+     * Visitor for attention. */
+    const uint32_t c = (pct <= 10) ? 0xD1656B : (pct <= 25) ? 0xE8A33D : 0x60D0A0;
+    lv_obj_set_style_bg_color(s_bat_fill, lv_color_hex(c), 0);
+    lv_obj_set_style_text_color(s_bat_lbl, lv_color_hex(pct <= 25 ? c : 0x8890A0), 0);
+}
+
 void scr_main_hud_refresh(void)
 {
     if (!s_hud_mood) return;

@@ -649,6 +649,17 @@ void care_tick(void)
                 const bool was_nap = s_sleep_was_nap;
                 audio_play(SND_WAKE);
                 p->asleep = false;
+                /* EVERY LATCH THAT DESCRIBED THE SLEEP JUST ENDED GOES WITH
+                 * IT. s_sleep_was_nap was read above and is now history; it
+                 * used to survive the wake-up, so "this was a nap" outlived
+                 * the nap. Sleep ENTRY re-arms both, so clearing them here
+                 * costs nothing and removes a whole class of leak - a Baby's
+                 * daytime nap state reaching the evening was already found
+                 * once, in Phase 10, and was patched at the point of USE
+                 * rather than at the source. This is the source. */
+                s_sleep_was_nap = false;
+                s_snore_left    = 0;
+                s_snore_next    = 0;
                 /* Morning restores daytime automatically - lights back ON
                  * and full brightness, whatever the player left them at. */
                 care_set_lights(true);
@@ -661,7 +672,17 @@ void care_tick(void)
                  * covers the mornings there was no dream to tell. */
                 if (!p->pending_dream)
                     ui_bubble_say(BUBBLE_T2_MOOD, dialogue_wake(was_nap));
-                Serial.println("SLEEP: wake up - bed away, daytime restored");
+                /* Sleepy is DERIVED (pet_mood() reads energy), so there is
+                 * nothing to "clear" - the honest check is that the energy
+                 * the sleep restored actually puts it below the threshold.
+                 * Printed rather than assumed, because this is the exact
+                 * thing that was wrong. */
+                Serial.printf("SLEEP: wake up (%s) - bed away, daytime restored; "
+                              "energy %.0f -> mood %s%s\n",
+                              was_nap ? "nap" : "night", (double)p->energy,
+                              pet_mood_name(pet_mood()),
+                              pet_mood() == MOOD_SLEEPY
+                                  ? "  <- STILL SLEEPY, this is a bug" : "");
                 persist_mark_dirty("woke up");
             }
 
@@ -848,6 +869,35 @@ feed_result_t care_feed(food_t f)
         return FEED_REFUSED;
     }
 
+    /* --- ASLEEP REFUSES EVERYTHING, AND NOTHING ELSE HAPPENS ------------
+     * This gate is FIRST, ahead of decide(), and that placement is the rule
+     * rather than an optimisation: decide() is where "cake is always
+     * accepted" lives, and a sleeping Visitor has to outrank it. Sleep is
+     * not a mood to be tempted out of.
+     *
+     * Returning here rather than refusing later is what makes the guarantee
+     * total. Everything that would otherwise happen is downstream of this
+     * line: no food object is created, so nothing drops and nothing is left
+     * on the floor; apply_feed() never runs, so fullness, weight, junk-food
+     * history and the care stats are untouched; no walk is started; the bed
+     * stays up and the room stays dark; and the sleep PERIOD is never
+     * interrupted, so the accumulated sleep and its one dream survive
+     * intact.
+     *
+     * The menu is deliberately NOT closed, and the line is DEFERRED - the
+     * same shape as the other refusals here ("I don't need to go!", "It's
+     * already clean!"). A refusal should not yank the player out to a dark
+     * room to watch nothing happen; the reaction is shown when they come
+     * back to the pet screen, with its duration starting then. */
+    if (pet_get()->asleep) {
+        Serial.printf("FEED %s REFUSED: asleep (%s) - staying in bed, nothing "
+                      "spawned, no stats touched\n",
+                      care_food_name(f), care_sleep_due() ? "sleep window"
+                                                          : "sleeping outside the window");
+        ui_bubble_say_deferred(BUBBLE_T1_REACTION, dialogue_sleepy_food());
+        return FEED_REFUSED;
+    }
+
     /* Same reasoning as Bathroom: the whole point is watching the Visitor
      * react, and that happens on the pet screen. */
     if (menu_is_open()) menu_close();
@@ -870,15 +920,15 @@ feed_result_t care_feed(food_t f)
     build_food_shape(s_fd_obj, f, false);
     lv_obj_set_pos(s_fd_obj, s_fd_x, -40);
 
-    /* Autonomous wandering would fight the scripted approach. A sleeping
-     * Visitor that REFUSES food never gets out of bed for it - it declines
-     * from where it is. */
+    /* Autonomous wandering would fight the scripted approach.
+     *
+     * The block that used to sit here woke a sleeping Visitor, hid the bed
+     * and turned the room lights back up so it could walk over and eat -
+     * `p->asleep = false; bed_hide(); scr_main_set_room_dark(false);`. It is
+     * gone: sleep now refuses food outright at the top of this function, so
+     * this path is only ever reached by a Visitor that was already awake and
+     * there is no sleeping state left to undo. */
     ui_pet_set_wander(false);
-    if (pet_get()->asleep && s_fd_res != FEED_DROPPED) {
-        pet_mutable()->asleep = false;      /* briefly up to eat */
-        bed_hide();
-        scr_main_set_room_dark(false);
-    }
 
     Serial.printf("FEED %s -> dropping at (%d,%d), decision: %s\n",
                   care_food_name(f), (int)s_fd_x, (int)s_fd_y,
@@ -960,7 +1010,14 @@ void care_anim_tick(void)
         if (s_fd_obj) { lv_obj_del(s_fd_obj); s_fd_obj = nullptr; }
         s_fd = FD_NONE;
         /* Still sleep time? Then back to bed, not asleep on the floor next to
-         * the crumbs. Otherwise resume normal daytime behaviour. */
+         * the crumbs. Otherwise resume normal daytime behaviour.
+         *
+         * STILL NEEDED, for a different case than it used to serve. This is
+         * no longer the tail of "woke up to eat, now go back" - that path is
+         * gone, because a sleeping Visitor refuses food. What remains is a
+         * feed STARTED while awake that runs across the bedtime boundary:
+         * begin at 19:59, finish at 20:00, and the Visitor must end up in
+         * bed rather than standing over the crumbs. */
         if (care_sleep_due()) care_return_to_bed();
         else                  ui_pet_set_wander(true);
     }
@@ -1518,6 +1575,33 @@ static void care_close_sleep_period(void)
         Serial.printf("    journal: %s\n", dialogue_dream_journal(id));
     }
 
+    /* --- WAKING FROM A REAL SLEEP MUST LEAVE THE VISITOR RESTED ---------
+     * THE FIX FOR "still Sleepy after a nap", and it belongs HERE rather
+     * than in the wake branch of care_tick() for two reasons.
+     *
+     * First, this is the one shared path. The period closes from the live
+     * tick, the fast-forward hook and every offline chunk alike, so a nap
+     * slept in a drawer clears Sleepy exactly as a nap slept in front of the
+     * child does. A fix in care_tick() would only ever cover the third case.
+     *
+     * Second, `slept` is only available here. care_advance() closes the
+     * period - zeroing sleep_accum_sec - BEFORE care_tick() reaches its wake
+     * branch in the same tick, so by the time the Visitor visibly wakes, how
+     * long it actually slept has already been thrown away.
+     *
+     * A FLOOR, never a set: a full night has already carried energy near 100
+     * and must not be dragged down to it. And it is gated on real sleep, so
+     * a period that opened and shut in seconds earns nothing. */
+    if (slept >= (uint32_t)SLEEP_RESTED_MIN_SEC &&
+        p->energy < ENERGY_RESTED_FLOOR) {
+        Serial.printf("  rested: energy %.0f -> %.0f (%s was long enough; "
+                      "Sleepy threshold is %.0f)\n",
+                      (double)p->energy, (double)ENERGY_RESTED_FLOOR,
+                      nap ? "the nap" : "the night",
+                      (double)ENERGY_SLEEPY_BELOW);
+        p->energy = ENERGY_RESTED_FLOOR;
+    }
+
     p->sleep_flags     = 0;      /* period closed */
     p->sleep_accum_sec = 0;
     persist_mark_dirty("sleep period ended");
@@ -1583,6 +1667,19 @@ void care_report(void)
     Serial.println("=== CARE STATE ============================================");
     Serial.printf("  hunger %.0f  clean %.0f  happy %.0f  weight %.1f g (norm %.2f)\n",
                   p->hunger, p->cleanliness, p->happiness, p->weight_g, pet_weight_norm());
+    /* ENERGY AND MOOD, which this report did not print - and which are the
+     * two values the "still Sleepy after a sleep" regression is judged on.
+     * A test that cannot read the thing it is testing is not a test. */
+    Serial.printf("  energy %.0f  (Sleepy below %.0f, rested floor %.0f)   "
+                  "mood %s%s\n",
+                  p->energy, (double)ENERGY_SLEEPY_BELOW,
+                  (double)ENERGY_RESTED_FLOOR, pet_mood_name(pet_mood()),
+                  p->asleep ? "   asleep" : "");
+    Serial.printf("  sleep period: %s  accumulated %lu min  flags 0x%02X\n",
+                  (p->sleep_flags & SLEEPF_IN_PERIOD)
+                      ? ((p->sleep_flags & SLEEPF_NAP) ? "NAP open" : "NIGHT open")
+                      : "none open",
+                  (unsigned long)(p->sleep_accum_sec / 60), p->sleep_flags);
     /* SLEEP AUDIO gate, spelled out. "No snoring at 2 am" is the audio rule
      * whose failure happens in a bedroom with nobody watching, and its inputs
      * are four private statics - so the only way to check it live was to sit

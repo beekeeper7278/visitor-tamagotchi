@@ -17,7 +17,7 @@ extern "C" {
 
 enum { GAME_HILO = 0, GAME_REACT, GAME_MEMORY, GAME_MAZE, GAME_COUNT };
 
-#define GAMEREC_VERSION 1
+#define GAMEREC_VERSION 2
 
 typedef struct __attribute__((packed)) {
     uint16_t version;
@@ -32,7 +32,28 @@ typedef struct __attribute__((packed)) {
     uint8_t  last_game;      /* 0xFF = none yet                            */
     uint8_t  streak;         /* consecutive plays of last_game             */
     uint32_t last_play_ts;   /* for the 30-minute streak expiry            */
+
+    /* --- v2: THE FAVOURITE GAME, appended -------------------------------
+     * v1 is therefore a strict byte prefix of v2 and the migration is "copy
+     * the old blob, seed the tail" - the same shape as every save_t schema.
+     * The previous loader threw the whole record away on a version bump,
+     * which would have cost a child every high score they had set.
+     *
+     * These are per-VISITOR, which is why they live here rather than in the
+     * device-scoped settings: gamerec_reset() at the farewell clears them
+     * and the next Visitor rolls its own. */
+    uint8_t  favorite;        /* GAME_*; GAME_COUNT = not chosen yet       */
+    uint8_t  fav_plays;       /* plays of the favourite since it was chosen */
+    uint16_t fav_boredom;     /* hundredths of a play; see config.h        */
+    uint16_t fav_bore_target; /* redrawn per favourite, 400..700           */
+    uint16_t _pad;
+    uint32_t fav_bore_ts;     /* RTC anchor for the time decay             */
 } gamerec_t;
+
+/* FROZEN. sizeof(gamerec_t) at v1: 8 header + 8 plays + 8 best + 4 maze +
+ * 2 total + 1 last_game + 1 streak + 4 ts. Getting this wrong rejects every
+ * v1 record as corrupt - the same trap as SAVE_V4_SIZE. */
+#define GAMEREC_V1_SIZE 36
 
 void  gamerec_begin(void);
 const gamerec_t *gamerec_get(void);
@@ -46,7 +67,28 @@ float gamerec_record_play(uint8_t game, uint16_t score, uint32_t ms, uint32_t no
  * explain the penalty before it is applied. */
 float gamerec_pending_multiplier(uint8_t game, uint32_t now_ts);
 
-uint8_t     gamerec_favorite(void);      /* most-played; GAME_COUNT if none */
+/* THE CURRENT FAVOURITE. Never GAME_COUNT: if the record has not chosen one
+ * yet (a fresh Visitor, or a v1 record migrated forward) this seeds it from
+ * personality on the spot. Seeding is lazy rather than done in
+ * gamerec_begin() because begin() runs BEFORE persist_load(), so at that
+ * point the traits in RAM are a freshly rolled set that the save is about to
+ * replace - a favourite chosen there would be weighted by the wrong
+ * personality entirely. */
+uint8_t     gamerec_favorite(void);
+
+/* Roll a new favourite from personality, excluding `avoid` (pass GAME_COUNT
+ * to exclude nothing). Exposed so the console can demonstrate the weighting
+ * without playing hundreds of games. */
+uint8_t     gamerec_roll_favorite(uint8_t avoid);
+
+/* One-shot: did the favourite just change because of boredom? Returns true
+ * ONCE per change and fills in both games. The caller owns the announcement -
+ * gamerec deliberately knows nothing about bubbles or dialogue. */
+bool        gamerec_take_fav_change(uint8_t *from, uint8_t *to);
+
+/* Is `game` the favourite, and what does that multiply the reward by? */
+bool        gamerec_is_favorite(uint8_t game);
+float       gamerec_fav_bonus(void);     /* 1.0 + FAV_BONUS_PCT/100 */
 const char *gamerec_name(uint8_t game);
 /* Move the streak stamp by a CLOCK CORRECTION. See sim_clock_corrected().
  *

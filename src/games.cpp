@@ -282,6 +282,7 @@ void games_press_start(void)
  * individual game can forget one of them. */
 static float s_happy_awarded;
 static float s_multiplier;
+static bool  s_was_favorite;
 
 static void finish_game(uint16_t score, uint32_t ms, float happy)
 {
@@ -291,9 +292,18 @@ static void finish_game(uint16_t score, uint32_t ms, float happy)
     const uint32_t now = rtc_trusted() ? rtc_now() : (millis() / 1000);
     const uint16_t prev_best = gamerec_get()->best[s_game];
     const bool first_play = (gamerec_get()->plays[s_game] == 0);
+    /* ASKED BEFORE RECORDING. gamerec_record_play() is what can retire a
+     * favourite through boredom, so afterwards this game may no longer be
+     * the favourite it was rewarded for - and the result screen has to say
+     * what actually happened. */
+    s_was_favorite = gamerec_is_favorite(s_game);
     s_multiplier = gamerec_record_play(s_game, score, ms, now);
     if (first_play)            journal_add(JM_FIRST_GAME, s_game, 0);
     else if (score > prev_best) journal_add(JM_RECORD, s_game, score);
+
+    /* The score and the best are written from the RAW score inside
+     * gamerec_record_play(), above and independent of every multiplier, so
+     * neither the favourite bonus nor the repeat penalty can reach them. */
 
     float h = happy * s_multiplier;
     if (h < 0.0f) h = 0.0f;          /* playing must never cost happiness */
@@ -304,9 +314,21 @@ static void finish_game(uint16_t score, uint32_t ms, float happy)
     p->happiness += h;
     if (p->happiness > 100.0f) p->happiness = 100.0f;
 
-    Serial.printf("GAME %s: score %u  happy +%.1f (x%.2f)\n",
-                  gamerec_name(s_game), score, h, s_multiplier);
+    Serial.printf("GAME %s: score %u  happy +%.1f (x%.2f)%s\n",
+                  gamerec_name(s_game), score, h, s_multiplier,
+                  s_was_favorite ? "  [FAVOURITE +bonus]" : "");
     show_result();
+
+    /* The favourite may have just changed. Deferred, so it queues politely
+     * behind the result screen rather than being spoken to a covered pet. */
+    uint8_t from, to;
+    if (gamerec_take_fav_change(&from, &to)) {
+        char b[96];
+        ui_bubble_say_deferred(BUBBLE_T1_REACTION,
+                               dialogue_fav_changed(to, b, sizeof(b)));
+        Serial.printf("GAME: favourite moved %s -> %s\n",
+                      gamerec_name(from), gamerec_name(to));
+    }
 }
 
 static void show_intro(void)
@@ -373,6 +395,10 @@ static void show_result(void)
 
     snprintf(b, sizeof(b), "Happiness +%d%s", (int)(s_happy_awarded + 0.5f),
              s_multiplier < 1.0f ? "  (repeat penalty)" : "");
+    /* The favourite line is its own label rather than a suffix: it is a nice
+     * moment and it competes badly for space against the penalty note, which
+     * can be showing at the same time (a favourite played four times running
+     * earns both). */
     g_label(s_body, b, 132, &lv_font_montserrat_20, 0x60D0A0);
 
     /* The Visitor reacts on its own screen too, so the result is not just
@@ -380,6 +406,13 @@ static void show_result(void)
     g_label(s_body, s_happy_awarded >= 14.0f ? "\"That was SO fun!\""
             : s_happy_awarded >= 8.0f ? "\"Good game!\"" : "\"Let's play again!\"",
             172, &lv_font_montserrat_20, 0xB0B8C8);
+
+    /* Sits in the gap between the quote (172) and Play Again (240), so it
+     * adds a line without moving anything that was already placed. A label,
+     * not a control, so being 16 px above a button is not a hit risk. */
+    if (s_was_favorite)
+        g_label(s_body, "Favourite game!  +Bonus", 200,
+                &lv_font_montserrat_20, 0xF2C14E);
 
     g_btn(s_body, "Play Again", 44, 240, BSP_LCD_W - 88, 76,
           game_colour(s_game), 0x101018, again_cb, NULL);

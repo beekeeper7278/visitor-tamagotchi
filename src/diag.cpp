@@ -1184,6 +1184,211 @@ static void diag_time_travel(uint32_t hours)
 /* Everything a clock-correction test needs to read, in one place: what the
  * clock says, whether a human has confirmed it, and every anchor that a
  * correction has to move. */
+/* --- FAVOURITE GAME: the weighting, and boredom -------------------------
+ * Both drive the SHIPPED functions. The distribution rolls the real
+ * gamerec_roll_favorite() and never stores the result, so it is completely
+ * non-destructive; the boredom walk calls the real gamerec_record_play(),
+ * which DOES advance this Visitor's play counts (back it up with TAB B if
+ * that matters). Neither touches evolution: `engage` reads
+ * pet_state.games_played, which only games.cpp increments. */
+static void diag_fav_distribution(void)
+{
+    const pet_state_t *p = pet_get();
+    Serial.println();
+    Serial.println("=== FAVOURITE GAME - SELECTION WEIGHTING ==================");
+    Serial.printf("  personality: %s / %s\n",
+                  evolve_trait_name(p->trait_a), evolve_trait_name(p->trait_b));
+    Serial.printf("  current favourite: %s\n", gamerec_name(gamerec_favorite()));
+
+    const int N = 400;
+    int hit[GAME_COUNT] = {0,0,0,0};
+    for (int i = 0; i < N; i++) hit[gamerec_roll_favorite(GAME_COUNT)]++;
+    Serial.printf("  %d rolls through the REAL selector (nothing stored):\n", N);
+    for (uint8_t g = 0; g < GAME_COUNT; g++)
+        Serial.printf("    %-13s %3d  (%2d%%)\n", gamerec_name(g), hit[g],
+                      hit[g] * 100 / N);
+
+    /* The exclusion rule matters as much as the weighting: a boredom switch
+     * that could re-pick the same game would make the mechanic invisible. */
+    const uint8_t cur = gamerec_favorite();
+    int same = 0;
+    for (int i = 0; i < N; i++) if (gamerec_roll_favorite(cur) == cur) same++;
+    Serial.printf("  %d rolls EXCLUDING the current favourite: %d picked it "
+                  "again  %s\n", N, same, same == 0 ? "-> PASS" : "-> FAIL");
+    Serial.println("-----------------------------------------------------------");
+}
+
+static void diag_fav_boredom(void)
+{
+    Serial.println();
+    Serial.println("=== FAVOURITE GAME - BOREDOM WALK =========================");
+    Serial.println("  playing the CURRENT favourite over and over, through the");
+    Serial.println("  real gamerec_record_play(), until it changes.");
+    const uint32_t now = rtc_trusted() ? rtc_now() : (millis() / 1000);
+    const uint8_t start = gamerec_favorite();
+    for (int i = 1; i <= 12; i++) {
+        const uint8_t fav = gamerec_favorite();
+        const float m = gamerec_record_play(fav, 0, 0, now);
+        uint8_t from, to;
+        if (gamerec_take_fav_change(&from, &to)) {
+            Serial.printf("  play %-2d of %-13s x%.2f  -> BORED, now %s\n",
+                          i, gamerec_name(fav), (double)m, gamerec_name(to));
+            Serial.printf("  started on %s, switched after %d plays\n",
+                          gamerec_name(start), i);
+            Serial.println("-----------------------------------------------------------");
+            return;
+        }
+        Serial.printf("  play %-2d of %-13s x%.2f  (boredom %u of %u)\n",
+                      i, gamerec_name(fav), (double)m,
+                      gamerec_get()->fav_boredom, gamerec_get()->fav_bore_target);
+    }
+    Serial.println("  12 plays without a switch - that is OUT OF SPEC (4-7)");
+    Serial.println("-----------------------------------------------------------");
+}
+
+/* RECOVERY: does playing something else actually pull boredom back down?
+ * Drives the real gamerec_record_play() for both halves. */
+static void diag_fav_recovery(void)
+{
+    const uint32_t now = rtc_trusted() ? rtc_now() : (millis() / 1000);
+    const uint8_t fav = gamerec_favorite();
+    uint8_t other = (uint8_t)((fav + 1) % GAME_COUNT);
+
+    Serial.println();
+    Serial.println("=== FAVOURITE GAME - BOREDOM RECOVERY =====================");
+    Serial.printf("  favourite %s, other game %s\n",
+                  gamerec_name(fav), gamerec_name(other));
+
+    for (int i = 1; i <= 3; i++) {
+        gamerec_record_play(fav, 0, 0, now);
+        uint8_t a, b;
+        if (gamerec_take_fav_change(&a, &b)) {
+            Serial.printf("  (it switched to %s mid-test - restarting the "
+                          "build-up on the new one)\n", gamerec_name(b));
+        }
+        Serial.printf("  played the favourite  -> boredom %u\n",
+                      gamerec_get()->fav_boredom);
+    }
+    const uint16_t peak = gamerec_get()->fav_boredom;
+
+    other = (uint8_t)((gamerec_favorite() + 1) % GAME_COUNT);
+    for (int i = 1; i <= 3; i++) {
+        gamerec_record_play(other, 0, 0, now);
+        Serial.printf("  played %-13s -> boredom %u\n",
+                      gamerec_name(other), gamerec_get()->fav_boredom);
+    }
+    const uint16_t after = gamerec_get()->fav_boredom;
+    Serial.printf("  peak %u -> %u after three other games   %s\n",
+                  peak, after, after < peak ? "RECOVERED - pass" : "FAIL");
+    Serial.printf("  (each other game removes %d, each favourite play adds %d,\n",
+                  FAV_BORE_PER_OTHER, FAV_BORE_PER_PLAY);
+    Serial.printf("   and time removes %d per hour)\n", FAV_BORE_DECAY_PER_HOUR);
+    Serial.println("-----------------------------------------------------------");
+}
+
+/* --- AXP2101 READ-ONLY PROBE [v1.0.0 pre-release] -----------------------
+ * WRITES NOTHING. Not one register, not once.
+ *
+ * board_pins.h (E) sets BSP_PMIC_VERIFIED 0 under a no-writes policy,
+ * because a wrong write to a rail on THIS board can brown out the panel. It
+ * also gates reads - on the grounds that a reading cannot be interpreted
+ * without knowing the configuration. That is a fair reason to distrust a
+ * NUMBER; it is not a reason to avoid LOOKING, and looking is the only way
+ * to find out whether a battery indicator is honestly possible here.
+ *
+ * So this dumps the documented status and ADC registers and interprets them
+ * conservatively. Reading an I2C register cannot change a rail. Whether the
+ * project then USES any of it is a separate decision, taken on the evidence
+ * this prints - see the battery notes in HANDOFF.
+ *
+ * Register meanings are the public AXP2101 map:
+ *   0x00 PMU status 1   0x01 PMU status 2   0x03 chip ID (0x4A)
+ *   0x30 ADC channel enable   0x34/35 VBAT   0x38/39 VBUS   0x3A/3B VSYS
+ *   0xA4 fuel-gauge battery percentage
+ * The ADC channels must be ENABLED for 0x34+ to mean anything, and enabling
+ * them is a WRITE - so 0x30 is the register that decides whether this board
+ * can report a battery voltage without the project touching the PMIC. */
+static void diag_pmic_probe(void)
+{
+    Serial.println();
+    Serial.println("=== AXP2101 PMIC - READ-ONLY PROBE ========================");
+    Serial.println("  NOTHING IS WRITTEN. This only looks.");
+
+    if (!bsp_i2c_probe(I2C_ADDR_PMIC)) {
+        Serial.println("  no device at 0x34 - no battery source here");
+        Serial.println("-----------------------------------------------------------");
+        return;
+    }
+
+    struct { uint8_t reg; const char *name; } R[] = {
+        { 0x00, "PMU status 1" }, { 0x01, "PMU status 2" },
+        { 0x03, "chip ID     " }, { 0x30, "ADC enable  " },
+    };
+    uint8_t v[4] = {0,0,0,0};
+    for (uint8_t i = 0; i < 4; i++) {
+        if (!bsp_i2c_read(I2C_ADDR_PMIC, R[i].reg, &v[i], 1)) {
+            Serial.printf("  %s (0x%02X): READ FAILED\n", R[i].name, R[i].reg);
+            continue;
+        }
+        Serial.printf("  %s (0x%02X): 0x%02X\n", R[i].name, R[i].reg, v[i]);
+    }
+
+    Serial.printf("  chip ID %s (0x4A expected for AXP2101)\n",
+                  v[2] == 0x4A ? "MATCHES" : "does NOT match");
+    Serial.printf("  ADC enable 0x%02X -> VBAT %s, VBUS %s, VSYS %s\n", v[3],
+                  (v[3] & 0x01) ? "ON" : "off", (v[3] & 0x04) ? "ON" : "off",
+                  (v[3] & 0x08) ? "ON" : "off");
+    Serial.println("    (a channel that is off reads garbage, and turning it");
+    Serial.println("     on would be a WRITE - which this project does not do)");
+
+    /* The 14-bit ADC pairs, printed raw AND as millivolts. */
+    struct { uint8_t hi; const char *name; } A[] = {
+        { 0x34, "VBAT" }, { 0x38, "VBUS" }, { 0x3A, "VSYS" },
+    };
+    for (uint8_t i = 0; i < 3; i++) {
+        uint8_t d[2];
+        if (!bsp_i2c_read(I2C_ADDR_PMIC, A[i].hi, d, 2)) {
+            Serial.printf("  %s: READ FAILED\n", A[i].name);
+            continue;
+        }
+        const uint16_t raw = (uint16_t)(((d[0] & 0x3F) << 8) | d[1]);
+        Serial.printf("  %s ADC (0x%02X/0x%02X): raw 0x%02X%02X -> %u (%u mV if valid)\n",
+                      A[i].name, A[i].hi, A[i].hi + 1, d[0], d[1], raw, raw);
+    }
+
+    uint8_t pct = 0xFF;
+    if (bsp_i2c_read(I2C_ADDR_PMIC, 0xA4, &pct, 1))
+        Serial.printf("  fuel gauge (0xA4): %u%%  %s\n", pct,
+                      pct <= 100 ? "(in range)" : "(OUT OF RANGE - not usable)");
+    else
+        Serial.println("  fuel gauge (0xA4): READ FAILED");
+
+    {
+        uint8_t m1 = 0, m2 = 0;
+        bsp_battery_status_seen(&m1, &m2);
+        Serial.printf("  status bits SEEN since boot: 0x00 -> 0x%02X, 0x01 -> 0x%02X\n",
+                      m1, m2);
+        Serial.println("    (OR of every sample. Unplug USB for a minute, plug back");
+        Serial.println("     in, and re-run: any bit that changes is the one that");
+        Serial.println("     tracks external power. NOTHING here is interpreted or");
+        Serial.println("     used - the meaning is unverified on this board.)");
+    }
+    if (bsp_battery_valid())
+        Serial.printf("  indicator: %u mV smoothed -> %u%% shown (curve, %lu s poll)\n",
+                      bsp_battery_mv(), bsp_battery_pct(),
+                      (unsigned long)(BATTERY_POLL_MS / 1000));
+    else
+        Serial.println("  indicator: no plausible reading yet - showing NOTHING");
+
+    Serial.println();
+    Serial.println("  VERDICT depends on two things: does the ADC enable bit for");
+    Serial.println("  VBAT read back ON without us writing it, and does VBAT sit");
+    Serial.println("  in a plausible LiPo range (about 3000-4300 mV)? If either");
+    Serial.println("  fails, this board cannot report a battery level read-only");
+    Serial.println("  and the indicator must NOT be faked.");
+    Serial.println("-----------------------------------------------------------");
+}
+
 static void diag_clock_report(void)
 {
     const pet_state_t *p = pet_get();
@@ -1344,6 +1549,10 @@ static void diag_phase10_menu(void)
     Serial.println("  CLOCK CORRECTION (moves the WALL CLOCK; age must NOT change)");
     Serial.println("          >  correct the clock +5 days    <  -5 days");
     Serial.println("          a  clock + age anchor report");
+    Serial.println("  PMIC  : P  AXP2101 READ-ONLY probe (writes nothing)");
+    Serial.println("  FAV   : F  selection weighting (400 rolls, non-destructive)");
+    Serial.println("          Z  boredom walk (DOES advance this Visitor's plays)");
+    Serial.println("          Y  boredom RECOVERY (build up, then play others)");
     Serial.println("          (NOT time travel - `%` `.` `,` move hatch_ts instead)");
     Serial.println("  SAVE  : B backup the Visitor   U restore it   i backup info");
     Serial.println("          (own NVS namespace; survives X and the V { \" # fixtures)");
@@ -1367,6 +1576,10 @@ static void diag_phase10_menu(void)
         case '>': diag_clock_shift_days(5);  break;
         case '<': diag_clock_shift_days(-5); break;
         case 'a': diag_clock_report();       break;
+        case 'P': diag_pmic_probe();         break;
+        case 'F': diag_fav_distribution();   break;
+        case 'Z': diag_fav_boredom();        break;
+        case 'Y': diag_fav_recovery();       break;
         case 'B': storage_backup();  break;
         case 'U': storage_restore(); break;
         case 'i': {

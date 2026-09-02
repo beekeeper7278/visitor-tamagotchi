@@ -54,6 +54,7 @@ static void sim_timer_cb(lv_timer_t *t)
 {
     (void)t;
     care_tick();
+    bsp_battery_tick();     /* self-throttles to BATTERY_POLL_MS */
     discipline_tick();
     if (farewell_due()) farewell_begin();
     persist_tick();

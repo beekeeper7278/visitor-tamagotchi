@@ -29,6 +29,29 @@ const bsp_status_t *bsp_status(void);
 /* --- raw I2C helpers (used by rtc/imu/power; no game logic here) -------- */
 bool bsp_i2c_probe(uint8_t addr);
 bool bsp_i2c_read(uint8_t addr, uint8_t reg, uint8_t *buf, size_t len);
+
+/* --- BATTERY [v1.0.0 pre-release] ---------------------------------------
+ * READ-ONLY, always. The AXP2101's VBAT ADC is already enabled by the
+ * board's own bring-up (verified with TAB P: register 0x30 reads 0x03), so
+ * the cell voltage can be sampled without this project ever writing to the
+ * PMIC - which board_pins.h (E) forbids, and which this does not do.
+ *
+ * bsp_battery_tick() self-throttles to BATTERY_POLL_MS, so it is safe to
+ * call from the 1 s tick; everything else is a cached read and costs
+ * nothing. bsp_battery_valid() is false until a plausible reading has been
+ * taken, and the UI must show NOTHING rather than a placeholder while it is
+ * - a fabricated percentage is worse than an empty corner. */
+void     bsp_battery_tick(void);
+bool     bsp_battery_valid(void);
+uint16_t bsp_battery_mv(void);     /* smoothed cell millivolts */
+uint8_t  bsp_battery_pct(void);    /* 0..100, from the BATTERY_CURVE */
+
+/* Every distinct AXP2101 status byte seen since boot, for the probe. The
+ * charging / external-power bits are NOT interpreted anywhere in this
+ * project: their meaning is not verified on this board, and guessing one
+ * would be exactly the invented method the brief rules out. This exists so
+ * the bits can be OBSERVED across a real unplug rather than assumed. */
+void     bsp_battery_status_seen(uint8_t *st1_mask, uint8_t *st2_mask);
 bool bsp_i2c_write8(uint8_t addr, uint8_t reg, uint8_t val);
 void bsp_i2c_scan(uint8_t *out, uint8_t *count, uint8_t max);
 

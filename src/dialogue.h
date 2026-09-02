@@ -82,8 +82,20 @@ const char *dialogue_food_refuse(void);
 /* Poked while asleep. `insistent` is the fourth poke in a row. */
 const char *dialogue_sleepy_poke(bool insistent);
 
+/* Food offered to a SLEEPING Visitor, which is always refused - see
+ * care_feed(). Separate from dialogue_food_refuse(), which is a full Visitor
+ * declining while awake: the two mean different things and a child has to be
+ * able to tell "I'm full" from "I'm asleep" without reading carefully. Every
+ * line here has to say, unmistakably, that it is not getting up. */
+const char *dialogue_sleepy_food(void);
+
 /* After a game. */
 const char *dialogue_game_done(void);
+
+/* The Visitor got bored of its favourite game and picked a new one. `to` is
+ * a GAME_* - the line is allowed to name it, and mostly does, because "my
+ * new favourite is X" is the whole point of the moment. */
+const char *dialogue_fav_changed(uint8_t to, char *buf, size_t len);
 
 /* --- motion [PHASE 10] ---------------------------------------------------
  * Being shaken, tipped over and held upside down. Flavoured by trait and

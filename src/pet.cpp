@@ -83,7 +83,7 @@ bool pet_sim_suspended(void)        { return s_suspended; }
 mood_t pet_mood(void)
 {
     if (s.asleep)                              return MOOD_ASLEEP;
-    if (s.energy < 20.0f)                      return MOOD_SLEEPY;
+    if (s.energy < ENERGY_SLEEPY_BELOW)        return MOOD_SLEEPY;
     if (s.hunger < 25.0f)                      return MOOD_HUNGRY;
     if (s.mess_count > 0 || s.cleanliness < 30.0f) return MOOD_YUCKY;
     if (s.happiness < 30.0f)                   return MOOD_GRUMPY;

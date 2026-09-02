@@ -299,3 +299,85 @@ void bsp_init(void)
 }
 
 const bsp_status_t *bsp_status(void) { return &s_st; }
+
+
+/* --- battery, read-only. See bsp.h and config.h. ------------------------ */
+
+static uint32_t s_bat_next_ms;
+static uint32_t s_bat_ema_mv;      /* 0 = no sample yet */
+static uint8_t  s_bat_pct_shown;
+static bool     s_bat_valid;
+static uint8_t  s_bat_st1_seen, s_bat_st2_seen;
+
+/* mV -> percent, piecewise linear between the BATTERY_CURVE anchors. */
+static uint8_t bat_curve_pct(uint16_t mv)
+{
+    static const struct { uint16_t mv; uint8_t pct; } C[] = BATTERY_CURVE;
+    const size_t n = sizeof(C) / sizeof(C[0]);
+
+    if (mv >= C[0].mv)     return C[0].pct;
+    if (mv <= C[n-1].mv)   return C[n-1].pct;
+    for (size_t i = 1; i < n; i++) {
+        if (mv >= C[i].mv) {
+            /* Between C[i] (lower) and C[i-1] (higher). */
+            const int32_t span_mv  = (int32_t)C[i-1].mv  - (int32_t)C[i].mv;
+            const int32_t span_pct = (int32_t)C[i-1].pct - (int32_t)C[i].pct;
+            if (span_mv <= 0) return C[i].pct;
+            const int32_t up = (int32_t)mv - (int32_t)C[i].mv;
+            return (uint8_t)(C[i].pct + (up * span_pct + span_mv / 2) / span_mv);
+        }
+    }
+    return 0;
+}
+
+void bsp_battery_tick(void)
+{
+    const uint32_t now = millis();
+    if (s_bat_next_ms && (int32_t)(now - s_bat_next_ms) < 0) return;
+    s_bat_next_ms = now + BATTERY_POLL_MS;
+
+    uint8_t d[2];
+    if (!bsp_i2c_read(I2C_ADDR_PMIC, 0x34, d, 2)) return;
+    const uint16_t raw = (uint16_t)(((d[0] & 0x3F) << 8) | d[1]);
+
+    /* Observe the status bytes without acting on them - see bsp.h. */
+    uint8_t st;
+    if (bsp_i2c_read(I2C_ADDR_PMIC, 0x00, &st, 1)) s_bat_st1_seen |= st;
+    if (bsp_i2c_read(I2C_ADDR_PMIC, 0x01, &st, 1)) s_bat_st2_seen |= st;
+
+    /* A reading outside the plausible window is not a battery. Reject it and
+     * keep the last good value rather than showing a wrong one. */
+    if (raw < BATTERY_MV_MIN || raw > BATTERY_MV_MAX) {
+        Serial.printf("BATTERY: implausible reading %u mV - ignored\n", raw);
+        return;
+    }
+
+    s_bat_ema_mv = s_bat_ema_mv
+        ? (uint32_t)((s_bat_ema_mv * (BATTERY_EMA_DEN - BATTERY_EMA_NUM)
+                      + (uint32_t)raw * BATTERY_EMA_NUM) / BATTERY_EMA_DEN)
+        : raw;
+
+    const uint8_t pct = bat_curve_pct((uint16_t)s_bat_ema_mv);
+    if (!s_bat_valid) {
+        s_bat_pct_shown = pct;
+        s_bat_valid = true;
+        Serial.printf("BATTERY: first reading %u mV -> %u%%\n", raw, pct);
+    } else {
+        const int diff = (int)pct - (int)s_bat_pct_shown;
+        if (diff >= BATTERY_HYST_PCT || diff <= -BATTERY_HYST_PCT) {
+            Serial.printf("BATTERY: %u mV (ema %lu) -> %u%%\n", raw,
+                          (unsigned long)s_bat_ema_mv, pct);
+            s_bat_pct_shown = pct;
+        }
+    }
+}
+
+bool     bsp_battery_valid(void) { return s_bat_valid; }
+uint16_t bsp_battery_mv(void)    { return (uint16_t)s_bat_ema_mv; }
+uint8_t  bsp_battery_pct(void)   { return s_bat_pct_shown; }
+
+void bsp_battery_status_seen(uint8_t *st1_mask, uint8_t *st2_mask)
+{
+    if (st1_mask) *st1_mask = s_bat_st1_seen;
+    if (st2_mask) *st2_mask = s_bat_st2_seen;
+}

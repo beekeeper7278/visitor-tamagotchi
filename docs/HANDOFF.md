@@ -13,6 +13,8 @@ Committed and pushed on `wip/phase8-9-pacing`, and flashed:
 - `c0603c7` four defects found by the sweep (§2f)
 - `311f2b9` Date & Time before the hatch, safe clock correction (§2f)
 - the mischief-frequency halving (§2g)
+- four polish items: dynamic favourite game, the stale-Sleepy fix, a
+  sleeping Visitor refusing all food, and a battery indicator (§2h)
 
 **Test 1 of the six PASSES on hardware** — see §9, which carries the
 measurement. The rest are still outstanding, and under the phase gate that
@@ -860,6 +862,147 @@ figures in front of you.
 A `#error` guard rejects a rate outside 5..400; a zero would have divided by
 zero silently in the preprocessor.
 
+## 2h. Four polish items [v1.0.0 pre-release]
+
+### 1. The favourite game is now a real mechanic
+
+`gamerec_favorite()` used to return whichever game had the most plays - a
+readout of the PLAYER's habit rather than a trait of the Visitor. It could be
+NONE, it never surprised anyone, and two Visitors with the same personality
+were guaranteed the same answer. It is now persisted state in the gamerec
+record (v1 -> v2, appended, WITH a migration - the old loader discarded the
+record on a version bump, which would have cost a child every high score).
+
+**Selection** starts every game at `FAV_W_BASE` 100, adds a row per trait,
+and floors at `FAV_W_MIN` 15 so nothing is ever impossible. All numbers are
+in config.h. Measured on hardware for a tidy/competitive Visitor, 400 rolls
+through the shipped selector:
+
+    weight   HiLo 120   React 150   Memory 190   Maze 80
+    expected      22.2%       27.8%        35.2%      14.8%
+    observed      24.5%       29.0%        33.8%      12.8%
+
+That Visitor's actual favourite came out Higher/Lower - the 22% option, not
+the 35% one - which is the point: personality moves the odds a long way
+without ever making the outcome certain.
+
+**Boredom** is in hundredths of a play, so the thresholds read as plays:
+
+    +100  per play of the favourite
+    -150  per play of anything else   (MORE than a play adds, so alternating
+                                       can never accumulate at all)
+     -25  per hour, off the RTC
+    switch at a target redrawn per favourite in 400..700, i.e. 4 to 7 plays
+
+Verified: a target of 5.81 plays switched after 6; recovery went 300 -> 150
+-> 0 across three other games. The switch **excludes** the current favourite -
+0 of 400 rolls picked it again - so boredom always visibly moves somewhere.
+
+**The bonus is happiness only.** It multiplies the same term the repeat
+penalty does, so the two compose - observed x1.25 alone, then x0.75 once the
+streak penalty joined it. Scores and bests are written from the raw score
+inside `gamerec_record_play()`, above and independent of every multiplier, so
+neither bonus nor penalty can reach them. Evolution is untouched: `engage`
+reads `pet_state.games_played`, which only games.cpp increments.
+
+### 2. The stale Sleepy bug - root cause and fix
+
+**There was no stale flag.** Mood is a pure function of state - Sleepy IS
+`energy < ENERGY_SLEEPY_BELOW`, with no latch anywhere - so the Visitor was
+not holding anything. It had genuinely not recovered: the nap window is ONE
+hour and restores at most 12 energy points (6 with the light on), so a
+Visitor that went down below 8 woke up, stretched, said its wake line, and
+was still under the threshold of 20. Every piece of code was behaving
+correctly and the result was still wrong.
+
+**The fix** guarantees a rested FLOOR when a sleep period that delivered real
+rest closes: `slept >= SLEEP_RESTED_MIN_SEC` (20 min) lifts energy to at
+least `ENERGY_RESTED_FLOOR` (35), clear of the threshold of 20. A floor,
+never a set - a full night is already near 100 and is not dragged down.
+
+It lives in `care_close_sleep_period()`, not in the wake branch, for two
+reasons. That is the ONE shared path, so a nap slept in a drawer clears
+Sleepy exactly as one slept in front of the child does. And `slept` only
+exists there: `care_advance()` closes the period and zeroes
+`sleep_accum_sec` BEFORE `care_tick()` reaches its wake branch in the same
+tick, so by the time the Visitor visibly wakes, how long it slept is gone.
+
+The wake branch additionally clears `s_sleep_was_nap`, `s_snore_left` and
+`s_snore_next`, which used to survive the wake-up - Phase 10 had patched that
+leak at the point of USE (the snore gate) rather than at the source.
+
+Regression case, on hardware:
+
+    energy 9   mood Sleepy                      <- precondition
+    SLEEP PERIOD: night begins
+    energy 15  mood Asleep, accumulated 30 min  <- 15 is STILL below 20
+    SLEEP PERIOD: night ends after 30 min
+      rested: energy 15 -> 35
+    SLEEP: wake up (night); energy 35 -> mood Content
+    sleep period: none open  flags 0x00
+
+`care_report()` now prints energy, mood and the sleep period, because it
+printed none of them and a test that cannot read what it is testing is not a
+test.
+
+### 3. A sleeping Visitor refuses all food
+
+The gate is the FIRST thing in `care_feed()`, ahead of `decide()`. That
+placement is the rule, not an optimisation: `decide()` is where "cake is
+always accepted" lives, and sleep has to outrank it. Returning there is what
+makes the guarantee total - no food object is created, `apply_feed()` never
+runs, no walk starts, the bed stays up, the room stays dark, and the sleep
+period is never interrupted.
+
+REMOVED from `care_feed()`:
+
+    p->asleep = false;   bed_hide();   scr_main_set_room_dark(false);
+
+i.e. the whole wake-walk-eat-return path. The `care_return_to_bed()` at the
+end of the food sequence STAYS, for a different case than it used to serve: a
+feed STARTED while awake that runs across the bedtime boundary.
+
+Verified on hardware - burger, fruit and cake, at both ~full and 0% fullness,
+during night sleep. All six refused; hunger, weight, cleanliness, happiness,
+meals, cakes, mess count and the open sleep period (flags 0x01) were byte
+identical before and after. Normal awake feeding is unaffected.
+
+### 4. Battery indicator - MEASURED, not estimated
+
+**How it is physically read on this V2 board.** The AXP2101 PMIC at I2C 0x34
+carries a 14-bit VBAT ADC at registers 0x34/0x35. A read-only probe (`TAB P`,
+which writes NOTHING) found:
+
+    chip ID    (0x03): 0x4A     <- confirms AXP2101
+    ADC enable (0x30): 0x03     <- the VBAT channel is ALREADY ON
+    VBAT    (0x34/35): 4058 mV
+    gauge      (0xA4): 100%
+
+`0x30 = 0x03` is what makes this feature legitimate here: the VBAT channel is
+enabled by the board's own bring-up, so a cell voltage can be read WITHOUT
+this project ever writing to the PMIC - which board_pins.h (E) forbids, and
+which it still does not do. `BSP_PMIC_VERIFIED` stays 0 and no pin mapping
+was touched.
+
+**Voltage to percentage.** VBAT rather than the fuel gauge, because the
+gauge's calibration for this pack is unknown (it read 100% at 4058 mV, which
+the curve puts at 86%) while a cell voltage means the same thing on every 1S
+LiPo. `BATTERY_CURVE` in config.h is 20 anchor points interpolated piecewise -
+a LiPo is emphatically not linear, and a straight 3.0-4.2 V line reads 14
+points high at 3.8 V. Host-tested: monotonic and in range across the whole
+2500-4500 mV window.
+
+Readings outside 2500-4500 mV are rejected as "not a battery". Smoothing is
+an EMA on MILLIVOLTS (1/4 weight) rather than on the percentage, because the
+curve is steep at the ends; a 2-point deadband on the displayed percentage
+then stops a cell on a boundary flickering. **Polling is 30 s**, self
+throttled inside `bsp_battery_tick()`, so the 1 s tick can call it freely.
+
+Placement: top-left, x 40..106, y 16..29 - clear of the mood dot (16..28),
+the menu handle (316..360), the Visitor (y 150..310), bubbles and the reveal
+banner. Nothing in it is clickable. It is hidden entirely until a plausible
+reading exists, and hidden while the pre-hatch selectors own that row.
+
 ## 3. Save schema
 
 **Schema 8. `sizeof(save_t)` = 433 bytes. `SAVE_SIZE_BUDGET` = 448.**
@@ -1127,6 +1270,18 @@ Phase 9.5: 1 day = 1 Visitor year, said out loud in the child-facing copy.
     MISCHIEF_BASE_PCT_9_5 14         (unchanged by the dial, deliberately)
     MISCHIEF_SETTLE_HATCH_MS 120000  _BOOT_MS 60000
 
+    FAV_W_BASE 100   FAV_W_MIN 15    per-trait rows in config.h
+    FAV_BORE_PER_PLAY 100            FAV_BORE_PER_OTHER 150
+    FAV_BORE_DECAY_PER_HOUR 25       target 400..700 (4-7 plays)
+    FAV_BONUS_PCT 25                 happiness only; never the score
+
+    ENERGY_SLEEPY_BELOW 20.0   ENERGY_RESTED_FLOOR 35.0
+    SLEEP_RESTED_MIN_SEC 1200  (20 min of real sleep earns the floor)
+
+    BATTERY_POLL_MS 30000      BATTERY_MV_MIN/MAX 2500 / 4500
+    BATTERY_EMA 1/4 on mV      BATTERY_HYST_PCT 2
+    BATTERY_CURVE              20 anchor points, piecewise linear
+
 Spontaneous mischief was HALVED in the v1.0.0 pre-release (§2g). The dial
 scales the SCHEDULE only; `mischief_pct()` is byte-identical, so the whole
 percentage table and every relative behaviour are untouched. Measured on
@@ -1248,6 +1403,33 @@ hardware, same Visitor before and after:
    Verified stable across repeated page sweeps - it is a fixed cost, not a
    leak. Do not raise `LV_MEM_SIZE` without measuring a real peak.
 6. **A marginal USB cable** was part of the first serial wedge. See §2b.
+7. **The AXP2101 charging / external-power bits are NOT interpreted.**
+   `TAB P` reads status 0x00 = 0x28 and 0x01 = 0x14 on this board, but which
+   bit tracks USB power is not verified HERE, and guessing one would be
+   exactly the invented method the brief ruled out. So there is no charging
+   icon and the indicator is not hidden on USB. The cell voltage is still
+   meaningful either way. `bsp_battery_status_seen()` now accumulates every
+   status byte observed since boot, so the test that settles it is: run
+   `TAB P`, unplug USB for a minute, plug back in, run `TAB P` again - any
+   bit that changed is the one. VBUS and VSYS cannot help: their ADC channels
+   read disabled (0x30 = 0x03) and enabling them would be a WRITE.
+8. **The fuel-gauge register 0xA4 reads 100% at 4058 mV**, which the curve
+   puts at 86%. Deliberately unused - an uncalibrated gauge that says 100%
+   most of the way down is worse than a voltage.
+9. **The battery indicator has not been looked at on the panel by me** - I
+   have no view of the screen. Its coordinates are checked against every
+   other element (§2h) and it is not clickable, but a human should confirm it
+   reads well before this is called done.
+10. **A Baby daytime NAP has not been exercised on hardware** since the fix.
+   The test Visitor aged into a Kid mid-session and Kids do not nap. Night
+   sleep was verified end to end, and nap and night close through the SAME
+   `care_close_sleep_period()` path with only the window and the dream
+   threshold differing - but a Baby nap has not been watched.
+11. **The v1.0.0 diagnostics inflated this Visitor's play counts.** `TAB Z`
+   and `TAB Y` drive the real `gamerec_record_play()`, so plays[] reads
+   25/24/36/48 from testing rather than play. Bests are untouched (the
+   fixtures pass score 0) and evolution is unaffected (`engage` reads
+   `pet_state.games_played`, which only games.cpp increments).
 
 ## 9. Exact next steps
 
@@ -1296,10 +1478,16 @@ hardware, same Visitor before and after:
    through Phase 10 verification AND through this sweep so far — it is still
    the user's call.
 
-5. The sweep is not finished as a sweep. What has been swept so far is the
-   clock/age/hatch surface and the four defects in §2f; nothing has
-   systematically gone after the games, the menu/pager, the bubble system or
-   the farewell path.
+5. **Verify §2h on hardware where I could not.** Specifically: look at the
+   battery indicator on the panel (§8.9), and watch a BABY take a daytime nap
+   and clear Sleepy (§8.10). Everything else in §2h was verified on hardware
+   and the traces are in that section.
+6. Optionally settle the AXP2101 external-power bit with the unplug test in
+   §8.7 - that is what a charging indicator would need.
+7. The sweep is not finished as a sweep. What has been swept so far is the
+   clock/age/hatch surface, the four defects in §2f, and the four polish
+   items in §2h; nothing has systematically gone after the menu/pager, the
+   bubble system or the farewell path.
 
 Voice packs are NOT in git. A fresh clone needs `pio run -t uploadfs` with
 `data/voice_boy.bin` and `data/voice_girl.bin` rebuilt per
@@ -1369,6 +1557,10 @@ seconds. Use `~/.platformio/penv/bin/python` (it has pyserial).
            every anchor a correction rebases)
     TAB B  backup the Visitor   TAB U  restore it   TAB i  slot info
            (own NVS namespace; survives X and the V { " # fixtures)
+    TAB P  AXP2101 READ-ONLY probe (writes NOTHING) + battery state
+    TAB F  favourite-game weighting: 400 rolls, non-destructive
+    TAB Z  boredom walk    TAB Y  boredom recovery
+           (both DO advance this Visitor's play counts - TAB B first)
 
 `y` leaves simulation SUSPENDED and is not persisted — power-cycle to clear.
 A common self-inflicted test failure is leaving it on and concluding a feature

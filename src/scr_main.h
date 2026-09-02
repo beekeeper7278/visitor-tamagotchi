@@ -58,6 +58,11 @@ bool      scr_main_clock_ready(void);
 void      scr_main_set_room_dark(bool dark);
 void      scr_main_sleep_fx(void);      /* floating Zs while asleep */
 
+/* Small battery icon + percentage, top-left. Cached reads only; hidden while
+ * the pre-hatch selectors own that row, and hidden entirely until a
+ * plausible reading exists. */
+void      scr_main_battery_refresh(bool choosing);
+
 #ifdef __cplusplus
 }
 #endif

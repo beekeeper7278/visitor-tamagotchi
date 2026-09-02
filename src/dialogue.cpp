@@ -552,6 +552,78 @@ const char *dialogue_sleepy_poke(bool insistent)
     return pick(POKE_ANY, NELEM(POKE_ANY));
 }
 
+/* --- food offered to a sleeping Visitor ---------------------------------
+ * ALWAYS refused, whatever the food and whatever the fullness - so the
+ * meaning that must survive every variant is "no, and I am not getting up".
+ * Personality only changes the voice. */
+static const char *const FOODZZZ_ANY[] = {
+    "No, I'm too sleepy to get up and eat.",
+    "Nooo... sleeping now, eating later.",
+    "Can't. Bed. Too comfy.",
+    "Mmmf... not hungry, just sleepy.",
+};
+static const char *const FOODZZZ_SLEEPY[] = {
+    "You want me to get UP? For FOOD?",
+    "Sleeping beats snacking. Every time.",
+};
+static const char *const FOODZZZ_FOODIE[] = {
+    "Don't tempt me... no. Sleeping.",
+    "Save me some? I'm too sleepy.",
+};
+static const char *const FOODZZZ_DRAMATIC[] = {
+    "I am ASLEEP. This is an OUTRAGE.",
+    "Do you know what time it is?!",
+};
+
+const char *dialogue_sleepy_food(void)
+{
+    if (flavour_wins()) {
+        if (trait(PERS_SLEEPY))   return pick(FOODZZZ_SLEEPY, NELEM(FOODZZZ_SLEEPY));
+        if (trait(PERS_FOODIE))   return pick(FOODZZZ_FOODIE, NELEM(FOODZZZ_FOODIE));
+        if (trait(PERS_DRAMATIC)) return pick(FOODZZZ_DRAMATIC, NELEM(FOODZZZ_DRAMATIC));
+    }
+    return pick(FOODZZZ_ANY, NELEM(FOODZZZ_ANY));
+}
+
+/* --- a new favourite game ------------------------------------------------
+ * A format string with ONE %s, filled with the new game's name. Kept as
+ * patterns rather than pre-built lines so the four game names never have to
+ * be duplicated into this file. */
+static const char *const FAVNEW_ANY[] = {
+    "I think %s is my new favourite!",
+    "Actually... %s. %s is the best one.",
+    "New favourite: %s!",
+    "I've decided. %s from now on.",
+};
+static const char *const FAVNEW_DRAMATIC[] = {
+    "I am DONE with that one. %s now!",
+    "Everything has changed. %s is my favourite.",
+};
+static const char *const FAVNEW_COMPETITIVE[] = {
+    "I'm getting too good at that one. %s next!",
+    "New challenge: %s.",
+};
+static const char *const FAVNEW_CURIOUS[] = {
+    "Ooh - what about %s? Yes. %s.",
+    "I want to try %s more.",
+};
+
+const char *dialogue_fav_changed(uint8_t to, char *buf, size_t len)
+{
+    const char *pat = NULL;
+    if (flavour_wins()) {
+        if (trait(PERS_DRAMATIC))    pat = pick(FAVNEW_DRAMATIC, NELEM(FAVNEW_DRAMATIC));
+        else if (trait(PERS_COMPETITIVE)) pat = pick(FAVNEW_COMPETITIVE, NELEM(FAVNEW_COMPETITIVE));
+        else if (trait(PERS_CURIOUS))     pat = pick(FAVNEW_CURIOUS, NELEM(FAVNEW_CURIOUS));
+    }
+    if (!pat) pat = pick(FAVNEW_ANY, NELEM(FAVNEW_ANY));
+    const char *nm = gamerec_name(to);
+    /* Two patterns use %s twice; passing the name three times is harmless
+     * and saves counting them. */
+    snprintf(buf, len, pat, nm, nm, nm);
+    return buf;
+}
+
 static const char *const GAME_ANY[] = {
     "That was fun!", "Again sometime?", "Good game!", "I liked that.",
 };
@@ -738,9 +810,14 @@ void dialogue_about_me(char *out, size_t len)
      *    is not - so it is only claimed once a game has been played. */
     n = app(out, len, n, "\nMy favourite food is %s.",
             evolve_food_name(evolve_favourite_food()));
-    if (g->total_games)
-        n = app(out, len, n, " I think the %s is my favourite game.",
-                gamerec_name(gamerec_favorite()));
+    /* NO LONGER GATED ON HAVING PLAYED. The favourite game used to be
+     * inferred from the play counts, so before the first game there was
+     * genuinely no answer and claiming one would have been a guess. It is
+     * now a trait the Visitor arrives with, chosen from its personality, so
+     * it can say it on day one - and saying it is how a child finds out
+     * which game to try. */
+    n = app(out, len, n, " I think the %s is my favourite game.",
+            gamerec_name(gamerec_favorite()));
 
     /* 3. how I behave, from the DISCIPLINE history rather than a guess.
      *    Both directions are gentle: neither reads as a telling-off. */
