@@ -9,3 +9,7 @@
 __pycache__/
 *.pyc
 data/*.bin
+# Voice-pack toolchain: two 63 MB models and a venv, both reproducible from
+# tools/voicepack/README.md. The packs themselves are already ignored above.
+models/
+piperenv/

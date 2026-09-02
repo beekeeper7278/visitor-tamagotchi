@@ -15,6 +15,8 @@ Committed and pushed on `wip/phase8-9-pacing`, and flashed:
 - the mischief-frequency halving (§2g)
 - four polish items: dynamic favourite game, the stale-Sleepy fix, a
   sleeping Visitor refusing all food, and a battery indicator (§2h)
+- complete Piper voice coverage: 304 -> 321 lines, both packs at 100%,
+  plus two audio-quality defects fixed (§2i)
 
 **Test 1 of the six PASSES on hardware** — see §9, which carries the
 measurement. The rest are still outstanding, and under the phase gate that
@@ -1003,6 +1005,97 @@ the menu handle (316..360), the Visitor (y 150..310), bubbles and the reveal
 banner. Nothing in it is clickable. It is hidden entirely until a plausible
 reading exists, and hidden while the pre-hatch selectors own that row.
 
+## 2i. Voice coverage and quality pass [v1.0.0 pre-release]
+
+Reported symptom: normal dialogue still chirping, "I did a little accident."
+named. Root cause found, two more defects found alongside it, all fixed.
+
+### Why the accident line beeped
+
+`sim_return_greeting()` in `sim.cpp` returns the six return-from-absence
+greetings, and `main.cpp` hands the RESULT to `ui_bubble_say()`. The pack
+generator missed them TWICE OVER: `sim.cpp` was not in `SPOKEN_SOURCES`, so
+its strings were never read, and because the call site passes a VARIABLE
+rather than a literal, the inline pass could not see them either. They fell
+through both nets.
+
+The same shape hid the five evolution reactions (`evo_line()`), and a regex
+requiring the literal immediately after the first comma hid two more behind
+a ternary (`"Turn the light off!"` / `"It's too bright!"`).
+
+`collect_lines()` now runs THREE passes - pools, every literal inside a
+speech call parsed paren-balanced, and returns from an allowlist of speech
+functions. The allowlist matters: most `return "..."` in this codebase is a
+name table (`pet_stage_name`, `gamerec_name`, `rtc_health_name`) and "Tilt
+Maze" is not speech.
+
+    old collector 304 lines  ->  new 321   (+17, -0)
+
+The other 10 of the 27 missing clips were the sleepy-food pool added in §2h,
+after the last pack build. Nothing had noticed.
+
+### Two quality defects, found by measuring rather than by ear
+
+**Short lines said themselves twice.** Fed a very short token sequence this
+VITS model's duration predictor destabilises: it emits the word, a second or
+more of silence, then a hallucinated repeat. "Hi!" did it in all six of six
+identical runs; "Yum!" ran to 6.2 s. Not the trailing space, not `noise_w`,
+not `length_scale` (it happens at 1.0 too), and the tokenisation is
+upstream's own and correct - BOS/PAD/EOS all present. 77 of 321 clips carried
+an internal silence over half a second.
+
+`repair_pauses()` counts the pause marks the TEXT asks for, allows that many,
+clamps each to 320 ms, and cuts anything beyond as hallucination. The
+discriminator HAS to be punctuation, because a repeat and a real pause are
+identical in the audio - and cutting at the first long gap unconditionally,
+the obvious fix, truncates "Um... I had a little accident." to "Um...".
+
+    internal silence > 500 ms : 77 -> 2      worst 1250 ms -> 450 ms
+    boy pack total audio      : 578 s -> 500 s (the repeats, gone)
+
+**Levels were peak-matched, not loudness-matched.** Peak is set by the single
+sharpest transient, so a line with a hard consonant scaled down for one
+sample and played quiet throughout - the loudness jump between lines. Now
+matched on RMS over the voiced audio with the peak ceiling kept only as a
+limiter. Also: 4 ms fades at the splice points (the first repair pass
+introduced 2 clicks) and the peak ceiling dropped to 27500 for ADPCM
+overshoot headroom (it had produced 1 clipped clip at 30000).
+
+### Where it landed
+
+    manifest            321 fixed spoken lines, with provenance
+    boy pack            321/321   4.28 MB
+    girl pack           321/321   4.31 MB
+    clipping            0        abrupt starts 0    abrupt ends 0
+    DC offset           0        zero-length   0    hash collisions 0
+    RMS spread          boy 7.8 dB, girl 2.9 dB
+
+Settings are unchanged and still as approved by ear: pitch x1.46, pace x1.15
+(15% SLOWER than natural - the pace was already generous and was not
+touched), noise 0.70, noise_w at the model default. The device-side stage
+ladder is likewise unchanged at 1.00 / 0.980 / 0.955 / 0.930, so the Adult
+sits 7% below the Baby - nowhere near an adult human, which was the concern.
+
+### Verification, in three places
+
+A generator cannot detect its own blind spot, so the check does not live in
+the generator:
+
+    tools/voicepack/check_coverage.py   host-side, complete, deterministic:
+                                        every manifest line against every
+                                        pack, exact totals, fails on missing
+                                        / collision / zero-length / stale
+    TAB I                               on-device: walks the pack INDEX,
+                                        compares the two packs against each
+                                        other, and re-checks a NAMED list of
+                                        all 27 lines that once shipped missing
+    TAB x                               on-device: asks the RUNTIME what it
+                                        can say - necessarily partial, since
+                                        a live Visitor only reaches its own
+                                        trait pools (178 of 321)
+    TAB A                               speaks the previously-broken lines
+                                        aloud; a lookup is not proof of audio
+
 ## 3. Save schema
 
 **Schema 8. `sizeof(save_t)` = 433 bytes. `SAVE_SIZE_BUDGET` = 448.**
@@ -1425,7 +1518,31 @@ hardware, same Visitor before and after:
    sleep was verified end to end, and nap and night close through the SAME
    `care_close_sleep_period()` path with only the window and the dream
    threshold differing - but a Baby nap has not been watched.
-11. **The v1.0.0 diagnostics inflated this Visitor's play counts.** `TAB Z`
+11. **Voice: the packs are NOT in git and never have been.** `data/*.bin` is
+   ignored; so now are `models/` (two 63 MB Piper models) and `piperenv/`.
+   A fresh clone must rebuild them per `tools/voicepack/README.md` and run
+   `pio run -t uploadfs`, or the Visitor falls back to chirps - a supported
+   degraded mode, not a failure. `tools/voicepack/manifest.tsv` IS committed,
+   so coverage can be checked against a pack built by anyone.
+12. **Truly dynamic text still chirps, by design.** The farewell note is
+   assembled at runtime from opener + praise + memory + improvement +
+   sign-off and is different every visit; the "new favourite game" lines are
+   `%s` patterns filled with a game name; the Journal's About Me is built the
+   same way. These are excluded by the `%`/escape filter in
+   `collect_lines()` and cannot be prerendered without rendering every
+   possible sentence. They keep the chirp voice, which is what it is for.
+13. **The voices have NOT been judged by ear by me** - I cannot listen.
+   Objective measurements are clean (no clipping, no abrupt starts or ends,
+   no DC offset, RMS spread 2.9 dB girl / 7.8 dB boy) and montage WAVs of
+   both voices across all four stages were handed over for a human decision
+   on whether they sound young, cute and clearly distinguishable. If the
+   answer is no, the levers are `PITCH` and `PACE` in `build_voicepack.py`
+   and a re-render is about four minutes.
+14. **The boy pack's RMS spread is 7.8 dB against the girl's 2.9 dB**, driven
+   by a small number of short exclamations whose retained gaps pull their
+   average down. Not audibly wrong in the objective data, but it is the one
+   number that did not come out as tight as its neighbour.
+15. **The v1.0.0 diagnostics inflated this Visitor's play counts.** `TAB Z`
    and `TAB Y` drive the real `gamerec_record_play()`, so plays[] reads
    25/24/36/48 from testing rather than play. Bests are untouched (the
    fixtures pass score 0) and evolution is unaffected (`engage` reads
@@ -1555,6 +1672,8 @@ seconds. Use `~/.platformio/penv/bin/python` (it has pyserial).
            command prints before/after and PASS/FAIL)
     TAB a  clock + RTC anchor report (health, confirmed?, START allowed?,
            every anchor a correction rebases)
+    TAB I  voice pack integrity + the once-missing regression list
+    TAB A  SPEAK the previously-broken lines aloud
     TAB B  backup the Visitor   TAB U  restore it   TAB i  slot info
            (own NVS namespace; survives X and the V { " # fixtures)
     TAB P  AXP2101 READ-ONLY probe (writes NOTHING) + battery state

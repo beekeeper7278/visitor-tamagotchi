@@ -1,0 +1,322 @@
+hash	source	text
+1508e69e	dialogue.cpp [pool]	*big stretch*
+9f14c60f	dialogue.cpp [pool]	*deep snooze*
+e97f14ee	dialogue.cpp [pool]	*happy chewing*
+43f0efe5	strings.cpp [pool]	*hums quietly*
+20fcc234	dialogue.cpp [pool]	*small voice* okay
+64b6ae49	dialogue.cpp [pool]	*yaaaawn*
+0895a529	sim.cpp [sim_return_greeting]	*yawn* ...oh, hi!
+5c1a2c34	dialogue.cpp [pool]	...is anyone there?
+7e5a7ac0	dialogue.cpp [pool]	...sorry.
+bd9bc3a2	dialogue.cpp [dreams]	A tidy monster ate the mess!
+2a8cbde8	dialogue.cpp [pool]	AGAIN! Let's go again!
+2fa9ad2c	dialogue.cpp [pool]	AN EARTHQUAKE! IN HERE!
+1cb8f66d	dialogue.cpp [pool]	Again sometime?
+b90be665	strings.cpp [pool]	Again! Again!
+e00049de	dialogue.cpp [pool]	Ahh, that's better!
+4ea9d917	dialogue.cpp [pool]	All the blood is in my head!
+e11e9eef	care.cpp [ui_bubble_say]	All tidy now!
+d980d752	dialogue.cpp [pool]	Are you my person?
+cd7d33f0	games.cpp [pool]	Aww...
+f51cb1f6	evolve.cpp [evo_line]	BEHOLD! I changed!
+1e833b2d	dialogue.cpp [pool]	Back again!
+e8073f2d	dialogue.cpp [pool]	Bed? Never heard of it.
+007e9dce	dialogue.cpp [pool]	Behold: me, awake.
+904590cd	dialogue.cpp [pool]	Behold: the smell.
+1c0133cb	dialogue.cpp [pool]	Best day ever.
+87eb8c18	strings.cpp [pool]	Boop!
+4e0006d9	dialogue.cpp [pool]	Burger! Excellent.
+63e81a7f	dialogue.cpp [pool]	CAKE! Cake cake cake!
+8d91e358	dialogue.cpp [pool]	CAKE. Finally.
+62afe515	dialogue.cpp [pool]	Cake! Yesss.
+61bc8057	dialogue.cpp [pool]	Cake. Now. Please. CAKE.
+1abf73e5	dialogue.cpp [pool]	Can I still see if I try really hard?
+6487683f	dialogue.cpp [pool]	Can we play tomorrow?
+87c69ff0	dialogue.cpp [pool]	Can you PLEASE hold still?
+a6ee6aad	dialogue.cpp [pool]	Can you flip me back?
+eb46e789	dialogue.cpp [pool]	Can't. Bed. Too comfy.
+cddd5ec7	dialogue.cpp [pool]	Could we tidy that away? Please?
+69c9cf46	dialogue.cpp [pool]	Crunchy!
+040b27ef	dialogue.cpp [pool]	DARKNESS! At this hour!
+a16f1a8a	dialogue.cpp [pool]	Dark! My favourite working conditions.
+227cada0	dialogue.cpp [pool]	Did you SEE that?
+11c25b4a	dialogue.cpp [pool]	Do you know what time it is?!
+9f977c99	dialogue.cpp [pool]	Don't tempt me... no. Sleeping.
+fe9854f4	dialogue.cpp [pool]	Eep!
+a8ad26fe	dialogue.cpp [pool]	Even I have limits.
+cdc521ab	dialogue.cpp [pool]	Everything is exactly where you left it. Probably.
+267db5b7	dialogue.cpp [dreams]	Everything sorted itself!
+6b6dadf0	dialogue.cpp [pool]	Everything went dark blue.
+18413976	dialogue.cpp [pool]	Everything's spinny!
+39608178	dialogue.cpp [pool]	Fascinating. It's all gone black.
+ebd956e9	dialogue.cpp [pool]	Fastest Visitor alive!
+15909ebb	dialogue.cpp [pool]	Fiiine.
+df158e9c	dialogue.cpp [pool]	Fine. I'll do better.
+29711dc7	dialogue.cpp [pool]	Five more minutes...
+a63fe897	dialogue.cpp [pool]	Food goes on the FLOOR now.
+bc74f441	dialogue.cpp [pool]	Good game!
+4ffd6d31	dialogue.cpp [pool]	Good game. I'm tired.
+4a5b08c3	dialogue.cpp [pool]	Good morning!
+ed943c38	dialogue.cpp [pool]	HEY! Stop shaking me!
+5b1f6105	dialogue.cpp [pool]	Ha! I meant to do this.
+bb7e5a68	dialogue.cpp [pool]	Half now, half later?
+f45d8424	games.cpp [pool];strings.cpp [pool]	Hehe!
+eb5d75f9	dialogue.cpp [dialogue_mischief]	Hehe.
+ea84130a	dialogue.cpp [pool]	Hello again, room.
+fc981157	dialogue.cpp [pool]	Hello! What's happening?
+462947cf	dialogue.cpp [pool]	Hello, day.
+f0fb85af	dialogue.cpp [pool]	Hey! Put me back!
+4e6d6453	strings.cpp [pool]	Hi there!
+325d0001	dialogue.cpp [pool]	Hi!
+60a8cb6f	games.cpp [pool]	Higher or lower?
+1681e4fd	strings.cpp [pool]	Hmm...
+23919117	games.cpp [pool]	Hmm... guess!
+8789dc28	dialogue.cpp [pool]	Hmph.
+149442be	dialogue.cpp [pool]	Hmph. Dark.
+a02b171f	dialogue.cpp [pool]	Hmph. Put me down.
+482f4160	dialogue.cpp [pool]	Hmph. Smelly.
+46238243	pages.cpp [ui_bubble_say]	Hold Visitor how you normally use it.
+6d3a5bef	motion.cpp [ui_bubble_say]	Hold me still!
+d4f47d67	dialogue.cpp [pool]	I HAVE AWOKEN.
+d42d155d	dialogue.cpp [pool]	I HAVE BEEN LAUNCHED!
+5f79e9bb	dialogue.cpp [pool]	I KNOW.
+dfaf744a	dialogue.cpp [pool]	I LIVE ON THE CEILING NOW!
+a1d9ff76	dialogue.cpp [pool]	I am ASLEEP. This is an OUTRAGE.
+19b01245	dialogue.cpp [pool]	I am but a shape in the gloom.
+58d6c0cb	dialogue.cpp [pool]	I am full to the BRIM.
+c1cf4b0c	dialogue.cpp [dreams]	I bounced off the ceiling!
+1ef2ce44	farewell.cpp [pool]	I can see my star from here!
+c1fc849d	dialogue.cpp [pool]	I can't eat in these conditions.
+ab3976d0	dialogue.cpp [pool]	I can't finish it all...
+7fde8be7	dialogue.cpp [pool]	I can't see my feet!
+a30ed015	dialogue.cpp [pool]	I cannot LIVE like this!
+83b06002	dialogue.cpp [pool]	I could eat that again.
+aa690c3b	dialogue.cpp [pool]	I could not POSSIBLY.
+3e137a94	dialogue.cpp [dreams]	I could talk to the moon.
+37eda0ab	dialogue.cpp [pool]	I couldn't. I'm full!
+b905e5a0	dialogue.cpp [pool]	I did a mess. It's art.
+4731f48e	dialogue.cpp [pool]	I didn't mean it.
+da989f93	dialogue.cpp [pool]	I don't like this one.
+62966bce	care.cpp [ui_bubble_say_deferred]	I don't need to go!
+782b4b40	dialogue.cpp [dreams]	I dreamed I bounced so high I stuck to the ceiling and had to be fetched down.
+51eed36d	dialogue.cpp [dreams]	I dreamed I grew four extra feet. I kept tripping over them but I was VERY fast.
+7d0a6db5	dialogue.cpp [dreams]	I dreamed I had a long chat with the moon. It is very polite and it asked how you were.
+b2f46c84	dialogue.cpp [dreams]	I dreamed I hid the entire room somewhere clever. In the morning I could not remember where.
+c0b2adfb	dialogue.cpp [dreams]	I dreamed I sat on a small quiet cloud. Nobody looked at me and it was lovely.
+fb6ce2d4	dialogue.cpp [dreams]	I dreamed I was ENORMOUS. I could see the whole room from up there, and everyone clapped.
+43add5d2	dialogue.cpp [dreams]	I dreamed I was a spaceship!
+c5bef82d	dialogue.cpp [dreams]	I dreamed I was a very small duck. I could not do much, but everyone was pleased to see me.
+7a7561e2	dialogue.cpp [dreams]	I dreamed I was asleep, and in that dream I was also asleep. It was very restful.
+02e02c6d	dialogue.cpp [dreams]	I dreamed I was completely invisible. I did some things. I will not say which things.
+6d04a92e	dialogue.cpp [dreams]	I dreamed I was still asleep.
+76469447	dialogue.cpp [dreams]	I dreamed I won every single game, and then I won them again to make sure.
+cdef4ad5	dialogue.cpp [dreams]	I dreamed a big friendly monster came and ate all the mess. Then it said thank you and left.
+c7c85cdd	dialogue.cpp [dreams]	I dreamed about a cake that was bigger than me. I ate a doorway into it and had a little nap inside.
+6d1b09b0	dialogue.cpp [dreams]	I dreamed about socks.
+99f7103f	dialogue.cpp [dreams]	I dreamed about socks. Just socks. I do not know why, but I liked it.
+1dad14a0	dialogue.cpp [dreams]	I dreamed all the dust apologised and swept itself up. Very good dust.
+9c006e98	dialogue.cpp [dreams]	I dreamed everything tidied itself up in size order. It was the best dream I have ever had.
+18e07860	dialogue.cpp [dreams]	I dreamed it rained burgers. I caught eleven of them. I only dropped two, which is very good.
+3d7d9be5	dialogue.cpp [dreams]	I dreamed my bed turned into a spaceship! I forgot where I parked it.
+711f5351	dialogue.cpp [dreams]	I dreamed my bed was a little boat. I floated all night and did not fall out once.
+a36c3ccc	dialogue.cpp [dreams]	I dreamed my blanket was a big soft hill and I rolled all the way down it, twice.
+e810c4ee	dialogue.cpp [dreams]	I dreamed of a cake as big as me.
+0b846709	dialogue.cpp [dreams]	I dreamed of a very quiet cloud.
+4e9d25f5	dialogue.cpp [dreams]	I dreamed the buttons kept running away when I tried to press them. I caught one. It squeaked.
+311e97f8	dialogue.cpp [dreams]	I dreamed the floor was jelly.
+d485ad32	dialogue.cpp [dreams]	I dreamed the fruit was singing. It was not a good song, but they were trying their best.
+89f24d79	dialogue.cpp [dreams]	I dreamed the maze had no walls at all. I finished it instantly. It was not very hard.
+c91bf0f8	dialogue.cpp [dreams]	I dreamed the whole floor was wobbly jelly. I bounced everywhere and nobody could tell me off.
+bb10787b	dialogue.cpp [dreams]	I dreamed there was a little door in the sky. I opened it and there was ANOTHER sky behind it.
+96cd0172	strings.cpp [pool]	I feel good today.
+d0f29c4d	dialogue.cpp [dreams]	I found a door in the sky!
+8d58b45c	dialogue.cpp [pool]	I found the sun!
+39f1601b	farewell.cpp [pool]	I had a dream about home last night.
+8647979c	dialogue.cpp [dreams]	I had extra feet!
+1be364e3	dialogue.cpp [pool]	I have been SAVED.
+403cedc0	dialogue.cpp [pool]	I have made a list. It has one item.
+f050d6b7	dialogue.cpp [dreams]	I hid the whole room!
+603b8af8	strings.cpp [pool]	I like it here.
+89062644	dialogue.cpp [pool]	I liked that.
+79727237	strings.cpp [pool]	I need the toilet!
+254f99c3	dialogue.cpp [pool]	I require cake immediately.
+5d868e6a	dialogue.cpp [pool]	I said I'm SLEEPING!
+768dea1f	dialogue.cpp [pool]	I think I live here now.
+d480590c	dialogue.cpp [pool]	I threw it. On purpose. Sorry!
+8f27d165	dialogue.cpp [pool]	I was COMFY.
+4df1e898	dialogue.cpp [pool]	I was USING that light.
+e7365f9e	dialogue.cpp [dreams]	I was a GIANT. Enormous!
+d14963fc	dialogue.cpp [dreams]	I was a tiny duck!
+a0a91225	dialogue.cpp [pool]	I was having the BEST dream!
+dfdce252	dialogue.cpp [dreams]	I was invisible. Nobody knew.
+300ebdfd	dialogue.cpp [pool]	I wasn't doing anything.
+cad15cc1	dialogue.cpp [dreams]	I won EVERYTHING.
+c6411d43	strings.cpp [pool]	I wonder what's out there.
+a629fb3b	dialogue.cpp [pool]	I would like cake for every meal.
+c4611f7a	dialogue.cpp [pool]	I'd do it again. Probably.
+438b46a0	dialogue.cpp [pool]	I'd like the light back please.
+0ec0fe41	dialogue.cpp [pool]	I'd like to study it. From here.
+5e9d43eb	dialogue.cpp [pool]	I'll be good.
+4e62f1f0	dialogue.cpp [pool]	I'll beat that next time.
+f9a3d860	dialogue.cpp [pool]	I'm NOT sleepy!
+a27faae9	sim.cpp [sim_return_greeting]	I'm STARVING!
+27b865b1	dialogue.cpp [pool]	I'm fine. This is fine. Flip me back though.
+022d7e05	dialogue.cpp [pool]	I'm getting dizzy!
+6f32f4f9	farewell.cpp [pool]	I'm going to remember this place.
+02291b41	dialogue.cpp [pool]	I'm nearly full!
+17e7e557	strings.cpp [pool]	I'm really hungry!
+b29321a0	dialogue.cpp [pool]	I'm sleeping!
+b0c53ae2	strings.cpp [pool]	I'm so sleepy...
+fc3f90a5	dialogue.cpp [pool]	I've decided to call it Kevin.
+f53b8b91	dialogue.cpp [pool]	Is it night already?
+4495fb9e	strings.cpp [pool]	Is it snack time?
+96e0d468	dialogue.cpp [pool]	Is it today already?
+ddf689d0	dialogue.cpp [pool]	Is this Earth?
+b426291b	dialogue.cpp [pool]	Is this a ride?
+0ffae871	sim.cpp [sim_return_greeting]	It got a bit messy in here!
+233cb4e8	dialogue.cpp [pool]	It smells like NOT cake.
+38c6e44c	dialogue.cpp [dreams]	It was raining burgers!
+f5b6f16f	dialogue.cpp [pool]	It's a bit smelly. No rush though!
+cbd7b27e	dialogue.cpp [pool]	It's a bit whiffy in here.
+03ea3ca6	care.cpp [ui_bubble_say_deferred]	It's already clean!
+12871365	care.cpp [ui_bubble_say_deferred];discipline.cpp [ui_bubble_say_deferred]	It's still an egg!
+fe20be23	care.cpp [ui_bubble_say]	It's too bright!
+3c05fc4e	dialogue.cpp [pool]	Juicy!
+04516cb4	strings.cpp [pool]	Just wobbling about.
+fc1ee452	strings.cpp [pool]	La la la...
+78ff5098	dialogue.cpp [pool]	Let's do something!
+8d4d66a9	motion.cpp [ui_bubble_say]	Let's try that again!
+9b1fe206	dialogue.cpp [pool]	Lights. Please.
+138be712	evolve.cpp [evo_line]	Look at me now!
+49e00b8f	dialogue.cpp [pool]	Look what I made!
+f386328a	dialogue.cpp [pool]	MORNING! What are we doing?
+8d2b9f51	dialogue.cpp [pool]	MY WHOLE LIFE FLASHED BY!
+d2ba20ec	dialogue.cpp [pool]	Maybe later? I'm full.
+af857046	dialogue.cpp [pool]	Mmm... too sleepy.
+e58e9ed6	dialogue.cpp [pool]	Mmmf... not hungry, just sleepy.
+08ce5a89	dialogue.cpp [pool]	Mmmmmm cake.
+2b4edc62	dialogue.cpp [pool]	More! More games!
+8ea49207	dialogue.cpp [pool]	More! More!
+752745aa	dialogue.cpp [pool]	Morning!
+f536ab04	dialogue.cpp [pool]	Morning. Barely.
+1b2bead8	dialogue.cpp [pool]	Much better.
+c073c506	dialogue.cpp [dreams]	My bed was a boat.
+b73baa35	dialogue.cpp [pool]	My feet are back!
+4fbb2942	dialogue.cpp [pool]	My one mistake!
+e2b76dfa	farewell.cpp [pool]	My people will be looking for me soon.
+d73b6e42	dialogue.cpp [pool]	My tummy is completely full.
+6ac08251	dialogue.cpp [pool]	Nap over!
+fb6c8ef3	evolve.cpp [evo_line]	New look. Same trouble.
+24fad305	dialogue.cpp [pool]	Next time I'll be perfect.
+fcbd4f0b	games.cpp [pool]	Nice one!
+18fb8775	dialogue.cpp [pool]	No idea. None. Zero.
+09c96242	dialogue.cpp [pool]	No regrets.
+40db26c7	dialogue.cpp [pool]	No thank you. I'm full.
+7c69bcb4	dialogue.cpp [pool]	No thanks, I'm stuffed!
+b0656e84	dialogue.cpp [pool]	No, I'm too sleepy to get up and eat.
+c4b4632d	dialogue.cpp [pool]	Nobody can see me. Excellent.
+14878143	dialogue.cpp [pool]	Nooo. Sleeping.
+4d7c7d37	dialogue.cpp [pool]	Nooo... sleeping now, eating later.
+71a2f6c0	games.cpp [pool]	Nope!
+1304019c	games.cpp [pool]	Oh no!
+fcccae07	dialogue.cpp [pool]	Oh! I was asleep.
+749c8776	dialogue.cpp [pool]	Oh! There it is.
+af7859dd	dialogue.cpp [pool]	Oh! Um. Hello.
+84769976	dialogue.cpp [pool]	Oh! You're big.
+aec5de18	dialogue.cpp [pool]	Okay okay OKAY, enough!
+e98e4c45	dialogue.cpp [pool]	Okay, okay...
+3c6f8649	dialogue.cpp [pool]	One more minute! Or twenty.
+e87562fa	strings.cpp [pool]	Oof!
+a1fdc39c	care.cpp [ui_bubble_say]	Oof... much better.
+38daabef	dialogue.cpp [pool]	Ooh, I could get up to ANYTHING now.
+d35d3713	dialogue.cpp [pool]	Ooh, fresh.
+042b1190	dialogue.cpp [pool]	Ooh. Spooky.
+d3639d70	dialogue.cpp [pool]	Oops. Deliberate oops.
+cd27d55c	dialogue.cpp [pool]	Phew!
+db3c5098	strings.cpp [pool]	Please clean me up!
+516399f2	dialogue.cpp [pool]	Please stop... please?
+e636297a	dialogue.cpp [pool]	Please. Sleeping.
+d9b0c69c	dialogue.cpp [pool]	Point taken.
+338d225e	dialogue.cpp [pool]	Rematch. Soon.
+3c90a157	dialogue.cpp [pool]	Right way up! Hooray!
+cac6f786	dialogue.cpp [pool]	Save it for me for later?
+f0da0d0e	dialogue.cpp [pool]	Save me some? I'm too sleepy.
+5adce998	dialogue.cpp [pool]	Seriously. Clean it.
+defbb4c7	dialogue.cpp [pool]	Sleeping beats snacking. Every time.
+e78ea25a	dialogue.cpp [pool]	Smells like home!
+d38d9636	games.cpp [pool]	So close!
+41d9027e	dialogue.cpp [pool]	Something smells... suspicious.
+4bc000a2	dialogue.cpp [pool]	Soooo sleepy...
+3cd7c81b	dialogue.cpp [pool]	Sorry about the smell.
+aa85cd06	discipline.cpp [ui_bubble_say]	Stop telling me off!
+396e2be4	dialogue.cpp [pool]	THE SMELL HAS RETURNED.
+c3a486c0	dialogue.cpp [pool]	THE SUN RETURNS!
+2b369103	dialogue.cpp [pool]	THE WORLD HAS TURNED OVER!
+e31f406c	dialogue.cpp [pool]	Ten out of ten.
+fd18b61b	dialogue.cpp [pool]	Thank you!
+53115ba0	dialogue.cpp [pool]	That is still there, you know.
+ba6ed59d	dialogue.cpp [pool]	That smell is putting me off my snack.
+fa79b1a2	strings.cpp [pool]	That tickles!
+d944fa66	dialogue.cpp [pool]	That was a good nap.
+41d8609d	dialogue.cpp [pool]	That was a lot.
+6c2b3023	dialogue.cpp [pool]	That was fun!
+43db84e1	dialogue.cpp [pool]	That was fun. Nap now.
+047a3953	dialogue.cpp [pool]	That was there when I arrived.
+66e2e4fd	dialogue.cpp [pool]	That's enough for me.
+3c7278ce	discipline.cpp [ui_bubble_say]	That's not fair!
+73f62df2	dialogue.cpp [pool]	That's the good stuff.
+56e4269c	dialogue.cpp [pool]	That's very healthy of me.
+03289adb	dialogue.cpp [dreams]	The blanket was a hill!
+2c8c0a9f	dialogue.cpp [dreams]	The buttons ran away from me!
+1ade36d2	dialogue.cpp [dreams]	The dust said sorry.
+bad58faa	dialogue.cpp [pool]	The floor was too clean.
+c6142475	dialogue.cpp [dreams]	The fruit was singing!
+45d652bf	dialogue.cpp [dreams]	The maze had no walls!
+edfeac6b	dialogue.cpp [pool]	The shame!
+e27039be	dialogue.cpp [pool]	The sun has ABANDONED me.
+2fbe04e7	dialogue.cpp [pool]	There's a smell. I have questions.
+1c8b6602	dialogue.cpp [pool]	This is my best thing. Sleeping.
+fd1da0a4	dialogue.cpp [pool]	This is my grumpy face.
+c7684e18	dialogue.cpp [pool]	This is unacceptable to me personally.
+2b7bcc18	motion.cpp [ui_bubble_say]	Tilt calibrated!
+c7c9f45e	strings.cpp [pool]	Today is a good day.
+e071b083	dialogue.cpp [pool]	Tomorrow! Tomorrow!
+70ea6ceb	care.cpp [ui_bubble_say]	Turn the light off!
+f3465be2	care.cpp [ui_bubble_say]	Uh oh... I couldn't hold it.
+d8993f13	dialogue.cpp [pool]	Uh... did I do that?
+e9168d97	sim.cpp [sim_return_greeting]	Um... I had a little accident.
+7f416e40	dialogue.cpp [pool]	Um... I'm full, sorry.
+e9d399c4	evolve.cpp [evo_line]	Um... do I look different?
+75371430	dialogue.cpp [pool]	Um... it's a bit dark.
+e235ab23	dialogue.cpp [pool]	Up! Up! Up!
+2490aa9c	dialogue.cpp [pool]	WHEEE! Again! Again!
+d6b944cd	sim.cpp [sim_return_greeting]	WHERE HAVE YOU BEEN?!
+5a9b568c	dialogue.cpp [pool]	WHY AM I UPSIDE DOWN?!
+f9e59beb	dialogue.cpp [pool]	Wasn't me.
+c53095ce	dialogue.cpp [pool]	Watch this! *throws dinner*
+9d5e6ab6	dialogue.cpp [pool]	What IS that smell?
+a6746bd6	discipline.cpp [ui_bubble_say]	What did I do?!
+2e87dc8c	games.cpp [pool]	What do you think?
+5b0fb947	dialogue.cpp [pool]	What is that squishy brown thing?
+56678bd1	strings.cpp [pool]	What shall we do?
+130759a3	dialogue.cpp [pool]	Wheee! Do it again!
+03e52948	dialogue.cpp [pool]	Where do smells come from?
+eb27cdd9	dialogue.cpp [pool]	Where does the light GO?
+4a3bad8b	dialogue.cpp [pool]	Who turned out the sun?
+91e65cf1	dialogue.cpp [pool]	Whoa!
+4617046d	evolve.cpp [evo_line]	Whoa! I changed!
+e290b6c3	dialogue.cpp [pool]	Whoops! It slipped. Honest.
+a0a4c791	dialogue.cpp [pool]	Why are the lights off?
+dcd9e3ee	dialogue.cpp [pool]	Why does it stink in here?
+0a542c52	dialogue.cpp [pool]	Worth it.
+dc811cc3	games.cpp [pool]	Yes!
+89e3eefa	dialogue.cpp [pool]	Yes. Fine. Noted.
+8270e6c0	dialogue.cpp [pool]	You can't make me!
+1eef0fb5	dialogue.cpp [pool]	You get used to it. Mostly.
+8bff84ae	games.cpp [pool]	You got it!
+85720640	dialogue.cpp [pool]	You have RUINED it.
+331a648d	dialogue.cpp [pool]	You want me to get UP? For FOOD?
+ba508012	sim.cpp [sim_return_greeting]	You're back!
+11efefb5	strings.cpp [pool]	You're my favourite.
+5976bd3c	games.cpp [pool]	Your turn!
+a34e27c1	dialogue.cpp [pool]	Yum!

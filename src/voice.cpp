@@ -44,6 +44,17 @@ uint32_t voice_count(void)
     return 0;
 }
 
+bool voice_index_at(uint8_t pack, uint32_t i,
+                    uint32_t *hash, uint32_t *off, uint32_t *len)
+{
+    if (pack >= VOICE_PACKS || !s_pack[pack].ready) return false;
+    if (i >= s_pack[pack].n) return false;
+    if (hash) *hash = s_pack[pack].idx[i].hash;
+    if (off)  *off  = s_pack[pack].idx[i].off;
+    if (len)  *len  = s_pack[pack].idx[i].len;
+    return true;
+}
+
 uint32_t voice_hash(const char *text)
 {
     uint32_t h = 0x811C9DC5UL;

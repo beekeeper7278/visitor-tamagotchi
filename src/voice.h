@@ -75,6 +75,21 @@ bool voice_force_miss(void);
 
 bool voice_pack_ready(uint8_t pack);
 uint32_t voice_count(void);
+
+/* Read the i'th INDEX entry of a pack, so a diagnostic can enumerate the
+ * whole pack rather than only probe it with lines it already knows.
+ *
+ * That distinction is what the coverage sweep was missing: asking the runtime
+ * "can you say X?" can only ever cover the lines that runtime happens to
+ * offer, and the dialogue selectors are trait- and form-flavoured, so a live
+ * Visitor reaches its own pools and little else. Walking the index instead
+ * lets the device compare the two packs against EACH OTHER completely -
+ * every hash in boy must exist in girl and vice versa - and spot a
+ * zero-length clip without needing to know what text produced it.
+ *
+ * Returns false past the end. Diagnostic use only; gameplay never needs it. */
+bool voice_index_at(uint8_t pack, uint32_t i,
+                    uint32_t *hash, uint32_t *off, uint32_t *len);
 uint32_t voice_rate(void);
 void     voice_report(void);
 

@@ -1308,6 +1308,131 @@ static void diag_fav_recovery(void)
  * The ADC channels must be ENABLED for 0x34+ to mean anything, and enabling
  * them is a WRITE - so 0x30 is the register that decides whether this board
  * can report a battery voltage without the project touching the PMIC. */
+/* --- PACK INTEGRITY + THE LINES THAT USED TO BEEP ------------------------
+ * Two checks the runtime sweep structurally cannot do.
+ *
+ * The sweep asks a LIVE Visitor what it can say, and the dialogue selectors
+ * are flavoured by trait and form - so it reaches its own pools plus the
+ * generic fallbacks and no more (179 distinct against a 294-clip pack, and
+ * that gap is why a hole hid in it for a whole phase). Walking the pack INDEX
+ * instead compares the two packs against each other completely.
+ *
+ * The named list is the regression guard. Every line in it was genuinely
+ * missing from the shipped packs - the return-from-absence greetings that
+ * live in sim.cpp, the evolution reactions in evolve.cpp, the unfair-telling
+ * off replies, the lights complaint, and the sleepy-food pool added after
+ * the last pack build. Naming them means a future scanner change that drops
+ * one again fails HERE, by name, instead of being noticed from the sofa. */
+static void diag_voice_integrity(void)
+{
+    Serial.println();
+    Serial.println("=== VOICE PACK INTEGRITY ==================================");
+
+    uint32_t n[VOICE_PACKS] = {0, 0};
+    for (uint8_t p = 0; p < VOICE_PACKS; p++) {
+        if (!voice_pack_ready(p)) { Serial.printf("  pack %u NOT MOUNTED\n", p); continue; }
+        uint32_t h, o, l, zero = 0, i = 0;
+        while (voice_index_at(p, i, &h, &o, &l)) { if (!l) zero++; i++; }
+        n[p] = i;
+        Serial.printf("  pack %-4s entries %4lu   zero-length %lu\n",
+                      p == VOICE_BOY ? "boy" : "girl",
+                      (unsigned long)i, (unsigned long)zero);
+    }
+
+    /* Every hash in one pack must exist in the other, both directions. */
+    uint32_t only_a = 0, only_b = 0;
+    if (voice_pack_ready(VOICE_BOY) && voice_pack_ready(VOICE_GIRL)) {
+        uint32_t h, o, l, i = 0;
+        while (voice_index_at(VOICE_BOY, i, &h, &o, &l)) {
+            uint32_t j = 0, h2; bool hit = false;
+            while (voice_index_at(VOICE_GIRL, j, &h2, NULL, NULL)) {
+                if (h2 == h) { hit = true; break; }
+                j++;
+            }
+            if (!hit) { only_a++; Serial.printf("  ONLY IN BOY : %08lx\n", (unsigned long)h); }
+            i++;
+        }
+        i = 0;
+        while (voice_index_at(VOICE_GIRL, i, &h, &o, &l)) {
+            uint32_t j = 0, h2; bool hit = false;
+            while (voice_index_at(VOICE_BOY, j, &h2, NULL, NULL)) {
+                if (h2 == h) { hit = true; break; }
+                j++;
+            }
+            if (!hit) { only_b++; Serial.printf("  ONLY IN GIRL: %08lx\n", (unsigned long)h); }
+            i++;
+        }
+        Serial.printf("  boy-only %lu   girl-only %lu   %s\n",
+                      (unsigned long)only_a, (unsigned long)only_b,
+                      (only_a || only_b) ? "MISMATCH" : "packs match exactly");
+    }
+
+    /* THE REGRESSION LIST - lines that shipped missing and must never again. */
+    static const char *const WAS_MISSING[] = {
+        "Um... I had a little accident.", "I'm STARVING!",
+        "It got a bit messy in here!", "WHERE HAVE YOU BEEN?!",
+        "*yawn* ...oh, hi!", "You're back!",
+        "BEHOLD! I changed!", "Um... do I look different?",
+        "New look. Same trouble.", "Look at me now!", "Whoa! I changed!",
+        "Stop telling me off!", "That's not fair!", "What did I do?!",
+        "Turn the light off!", "It's too bright!", "Hehe.",
+        "No, I'm too sleepy to get up and eat.",
+        "Nooo... sleeping now, eating later.", "Can't. Bed. Too comfy.",
+        "Mmmf... not hungry, just sleepy.",
+        "You want me to get UP? For FOOD?",
+        "Sleeping beats snacking. Every time.",
+        "Don't tempt me... no. Sleeping.", "Save me some? I'm too sleepy.",
+        "I am ASLEEP. This is an OUTRAGE.", "Do you know what time it is?!",
+    };
+    const uint16_t nw = (uint16_t)(sizeof(WAS_MISSING) / sizeof(WAS_MISSING[0]));
+    uint16_t bad = 0;
+    Serial.printf("  regression list: %u lines that once beeped\n", nw);
+    for (uint16_t i = 0; i < nw; i++) {
+        uint32_t o, l;
+        for (uint8_t p = 0; p < VOICE_PACKS; p++) {
+            if (!voice_pack_ready(p)) continue;
+            if (!voice_lookup(p, WAS_MISSING[i], &o, &l) || !l) {
+                bad++;
+                Serial.printf("    STILL MISSING (%s): \"%s\"\n",
+                              p == VOICE_BOY ? "boy" : "girl", WAS_MISSING[i]);
+            }
+        }
+    }
+    Serial.printf("  regression check: %u/%u present in both packs  -> %s\n",
+                  (unsigned)(nw * 2 - bad), (unsigned)(nw * 2),
+                  bad ? "FAIL" : "PASS");
+    Serial.println("-----------------------------------------------------------");
+}
+
+/* Speak the previously-broken lines through the REAL playback path, at the
+ * Visitor's own stage and gender. Lookup success is not proof of audio: a
+ * clip can resolve and still be silence. */
+static void diag_voice_speak_fixed(void)
+{
+    static const char *const SAY[] = {
+        "Um... I had a little accident.",   /* the reported one */
+        "Uh oh... I couldn't hold it.",
+        "Oof... much better.",
+        "Turn the light off!",
+        "That's not fair!",
+        "Whoa! I changed!",
+        "No, I'm too sleepy to get up and eat.",
+        "Hi!",                              /* was a 3 s clip that said itself twice */
+        "Yum!",
+    };
+    Serial.println();
+    Serial.println("=== SPEAKING THE PREVIOUSLY-BROKEN LINES ==================");
+    Serial.printf("  pack %s, stage %s - listen, do not just read\n",
+                  pet_get()->gender == GENDER_GIRL ? "girl" : "boy",
+                  pet_stage_name(pet_get()->stage));
+    for (unsigned i = 0; i < sizeof(SAY) / sizeof(SAY[0]); i++) {
+        Serial.printf("  \"%s\"\n", SAY[i]);
+        audio_say(SAY[i]);
+        delay(2600);
+    }
+    Serial.println("-----------------------------------------------------------");
+}
+
 static void diag_pmic_probe(void)
 {
     Serial.println();
@@ -1550,6 +1675,8 @@ static void diag_phase10_menu(void)
     Serial.println("          >  correct the clock +5 days    <  -5 days");
     Serial.println("          a  clock + age anchor report");
     Serial.println("  PMIC  : P  AXP2101 READ-ONLY probe (writes nothing)");
+    Serial.println("  VOICE : I  pack integrity + the once-missing regression list");
+    Serial.println("          A  SPEAK the previously-broken lines aloud");
     Serial.println("  FAV   : F  selection weighting (400 rolls, non-destructive)");
     Serial.println("          Z  boredom walk (DOES advance this Visitor's plays)");
     Serial.println("          Y  boredom RECOVERY (build up, then play others)");
@@ -1577,6 +1704,8 @@ static void diag_phase10_menu(void)
         case '<': diag_clock_shift_days(-5); break;
         case 'a': diag_clock_report();       break;
         case 'P': diag_pmic_probe();         break;
+        case 'I': diag_voice_integrity();    break;
+        case 'A': diag_voice_speak_fixed();  break;
         case 'F': diag_fav_distribution();   break;
         case 'Z': diag_fav_boredom();        break;
         case 'Y': diag_fav_recovery();       break;
