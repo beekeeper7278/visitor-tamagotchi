@@ -1680,7 +1680,7 @@ supported degraded mode, not a failure.
 
 ## 10. Build / flash / test
 
-    cd /Users/daniel/Projects/tamagotghi
+    cd <your clone of this repo>
     pio run                                        # build
     pio run -t upload --upload-port /dev/cu.usbmodem101
 
