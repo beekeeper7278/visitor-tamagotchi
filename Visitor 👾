@@ -1,0 +1,61 @@
+# Visitor 👾
+
+**Visitor** is a virtual pet for the **Waveshare ESP32-S3-Touch-AMOLED-1.8 V2**.
+
+A little creature arrives to stay with you. Feed it, play games, clean up after it, help it sleep, and teach it how to behave. As time passes, Visitor grows from Baby → Kid → Teen → Adult and develops its own personality, favorite game, habits, memories, and evolution form.
+
+Eventually every Visitor goes home — but its visit is remembered, and future Visitors may even have heard about the ones that came before.
+
+> **Status:** Pre-release  
+> **Recommended version:** `v1.0.0-pre.2`
+
+## Features
+
+- 12 evolution forms
+- Real-time aging — **1 real day = 1 Visitor year**
+- Persistent RTC-based life while powered off
+- Boy / Girl / Surprise identity
+- Multiple personalities and care-driven behavior
+- Hunger, happiness, cleanliness, discipline, energy, and weight
+- Daytime naps and nighttime sleep
+- Dreams and a personal Journal
+- Dynamic favorite games that can change over time
+- Four built-in games:
+  - Higher / Lower
+  - Reaction / Tag
+  - Memory
+  - Tilt Maze
+- Gravity, shake, and upside-down reactions
+- Piper Boy and Girl voice packs
+- Battery percentage display
+- Visit Records and personalized farewells
+- No death mechanic — neglected Visitors may become grumpy, scruffy, mischievous, or chonky, but never die
+
+## Hardware
+
+Designed specifically for:
+
+**Waveshare ESP32-S3-Touch-AMOLED-1.8 V2**
+
+- ESP32-S3R8
+- 368×448 AMOLED
+- CO5300 display controller
+- CST820 touch
+- QMI8658 IMU
+- PCF85063A RTC
+- ES8311 audio codec
+- AXP2101 PMIC
+- 16 MB flash / 8 MB PSRAM
+
+**The V1 board is not supported.**
+
+## Build & Flash
+
+Requires [PlatformIO](https://platformio.org/).
+
+```bash
+git clone https://github.com/beekeeper7278/visitor-tamagotchi.git
+cd visitor-tamagotchi
+
+pio run
+pio run -t upload
